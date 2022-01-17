@@ -6,12 +6,10 @@ import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import org.apache.http.util.EntityUtils;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.*;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -20,9 +18,13 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 
 public class Main {
+    HttpPost httpPost;
+    CloseableHttpClient client;
+
     private Map<String, String> wallets = new HashMap<>();
-    String URLstr = "https://api.mainnet-beta.solana.com";
-    String getTransactionsJSON = """
+    private Map<String, String> lastTransactions = new HashMap<>();
+    String URLstr = "https://api.devnet.solana.com"; //"https://api.mainnet-beta.solana.com";
+    String getTransactionsJSONLimit = """
                 {
                     "jsonrpc": "2.0",
                     "id": 1,
@@ -30,7 +32,20 @@ public class Main {
                     "params": [
                         "key",
                         {
-                            "limit": 3
+                            "limit": 5
+                        }
+                    ]
+                }
+            """;
+    String getTransactionsJSONLastTransaction = """
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getSignaturesForAddress",
+                    "params": [
+                        "key",
+                        {
+                            "until": "lastTransaction"
                         }
                     ]
                 }
@@ -56,103 +71,77 @@ public class Main {
                 }
             """;
 
-    public void checkAccount(String key) {
-        try {
-            HttpPost httpPost = new HttpPost(URLstr);
-            httpPost.setHeader("Accept", "application/json");
-            httpPost.setHeader("Content-type", "application/json");
-            String JSON = getTransactionsJSON.replace("key", key);
-            StringEntity stringEntity = new StringEntity(JSON);
-            httpPost.setEntity(stringEntity);
-            CloseableHttpClient client = HttpClients.createDefault();
-            CloseableHttpResponse response = client.execute(httpPost);
-            HttpEntity entity = response.getEntity();
-            String result = EntityUtils.toString(entity);
-            JSONObject jsonObj = new JSONObject(result);
-            //System.out.println(JSON);
-            //System.out.println(jsonObj.toString(2));
-            JSONArray transactions = (JSONArray) jsonObj.get("result");
-            for (int i = transactions.length() - 1; i >= 0; i--) {
-                JSONObject transaction = (JSONObject) transactions.get(i);
-                String transactionKey = (String) transaction.get("signature");
-                postJson(JSONbody.replace("key", transactionKey));
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+    public Main() {
+        httpPost = new HttpPost(URLstr);
+        httpPost.setHeader("Accept", "application/json");
+        httpPost.setHeader("Content-type", "application/json");
+        client = HttpClients.createDefault();
     }
 
     public void checkAllAccounts() {
-        String[] walletAddresses = wallets.keySet().toArray(new String[wallets.size()]);
-        checkAccounts(walletAddresses);
+        String[] walletAddresses = wallets.keySet().toArray(new String[0]);
+        //importLastTransactions();
+        int i = 0;
+        while (i < 1) {
+            System.out.println(i++);
+            checkAccounts(walletAddresses);
+            try {
+                Thread.sleep(20_000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+        System.out.println("End");
+        exportLastTransactions();
     }
 
-    public void checkAccounts(String... keys) {
+    public void checkAccounts(String... walletAddresses) {
         try {
+            //lastTransactions.forEach((k, value) -> System.out.println(k + ":" + value));
             Map<Integer, String> transactionsMap = new TreeMap<>();
-            HttpPost httpPost = new HttpPost(URLstr);
-            httpPost.setHeader("Accept", "application/json");
-            httpPost.setHeader("Content-type", "application/json");
-            CloseableHttpClient client = HttpClients.createDefault();
-            for (String key : keys) {
-                String JSON = getTransactionsJSON.replace("key", key);
+            System.out.println("Checking addresses: " + walletAddresses.length);
+            for (String address : walletAddresses) {
+                System.out.println(address);
+                String lastTransactionStr = lastTransactions.get(address);
+                String JSON;
+                if (lastTransactionStr == null) {
+                    JSON = getTransactionsJSONLimit.replace("key", address);
+                } else {
+                    JSON = getTransactionsJSONLastTransaction.replace("lastTransaction", lastTransactionStr);
+                }
                 StringEntity stringEntity = new StringEntity(JSON);
                 httpPost.setEntity(stringEntity);
                 CloseableHttpResponse response = client.execute(httpPost);
                 HttpEntity entity = response.getEntity();
                 String result = EntityUtils.toString(entity);
                 JSONObject jsonObj = new JSONObject(result);
-                JSONArray transactions = (JSONArray) jsonObj.get("result");
-                for (int i = transactions.length() - 1; i >= 0; i--) {
-                    JSONObject transaction = (JSONObject) transactions.get(i);
-                    int blockTime = (int) transaction.get("blockTime");
-                    String transactionKey = (String) transaction.get("signature");
-                    transactionsMap.put(blockTime, transactionKey);
+                //System.out.println(key);
+                //writeJSONToFile(address, jsonObj);
+                try {
+                    JSONArray transactions = (JSONArray) jsonObj.get("result");
+                    for (int i = transactions.length() - 1; i >= 0; i--) {
+                        JSONObject transaction = (JSONObject) transactions.get(i);
+                        int blockTime = (int) transaction.get("blockTime");
+                        String transactionKey = (String) transaction.get("signature");
+                        transactionsMap.put(blockTime, transactionKey);
+                    }
+                    JSONObject lastTransaction = (JSONObject) transactions.get(0);
+                    String lastTransactionKey = (String) lastTransaction.get("signature");
+                    lastTransactions.put(address, lastTransactionKey);
+                } catch (org.json.JSONException e) {
+                    e.printStackTrace();
                 }
             }
+            System.out.println("List of transactions was formed: " + transactionsMap.size());
             // transactionsMap.forEach((k, value) -> System.out.println(k + ":" + value));
-            transactionsMap.forEach((k, value) -> postJson(JSONbody.replace("key", value)));
+            transactionsMap.forEach((k, value) -> postJson(value));
+            //lastTransactions.forEach((k, value) -> System.out.println(k + ":" + value));
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
-
-    //https://www.baeldung.com/httpurlconnection-post
-    public void response() {
-        try {
-            URL url = new URL(URLstr);
-            HttpURLConnection con = (HttpURLConnection) url.openConnection();
-            con.setRequestMethod("POST");
-            con.setRequestProperty("Content-Type", "application/json");
-            con.setRequestProperty("Accept", "application/json");
-            con.setDoOutput(true);
-            String jsonInputString = JSONbody;
-            try (OutputStream os = con.getOutputStream()) {
-                byte[] input = jsonInputString.getBytes(StandardCharsets.UTF_8);
-                os.write(input, 0, input.length);
-            }
-            try (BufferedReader br = new BufferedReader(
-                    new InputStreamReader(con.getInputStream(), StandardCharsets.UTF_8))) {
-                StringBuilder response = new StringBuilder();
-                String responseLine = null;
-                while ((responseLine = br.readLine()) != null) {
-                    response.append(responseLine.trim());
-                }
-                System.out.println(response);
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void trans(String... transactions) {
-        for (String s : transactions) {
-            postJson(JSONbody.replace("key", s));
-        }
-    }
-
-    public void parseTransaction(JSONObject transaction) {
+    public void parseTransaction(JSONObject transaction) throws org.json.JSONException {
         JSONObject resultBody = (JSONObject) transaction.get("result");
         // date & time
         int timeInSeconds = (Integer) resultBody.get("blockTime");
@@ -160,20 +149,21 @@ public class Main {
         SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy HH:mm:ss");
         //sdf.setTimeZone(TimeZone.getTimeZone("UTC+3"));
         String formattedDate = sdf.format(date);
+        JSONObject trans = (JSONObject) resultBody.get("transaction");
+        JSONArray signatures = (JSONArray) trans.get("signatures");
+        String transactionStr = (String) signatures.get(0);
+        //System.out.println(transactionStr);
         // text
         JSONObject meta = (JSONObject) resultBody.get("meta");
         JSONArray logMessages = (JSONArray) meta.get("logMessages");
         String firstLine = (String) logMessages.get(0);
         String text = "";
-        if (firstLine.equals("Program MEisE1HzehtrDpAAT8PnLHjpSSkRYakotTuJRPjTpo8 invoke [1]")) {
+        if (firstLine.contains("MEisE1HzehtrDpAAT8PnLHjpSSkRYakotTuJRPjTpo8") || firstLine.contains("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")) {
             //System.out.println("ME operation");
-            text = parseSale(transaction);
-        } else if (firstLine.equals("Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL invoke [1]")) {
-            //System.out.println("Alpha.art operation");
             text = parseSale(transaction);
         } else if (firstLine.equals("Program 11111111111111111111111111111111 invoke [1]")) {
             if (logMessages.length() > 15) {
-                //System.out.println("Mint");
+                System.out.println("Mint ");
                 text = parseNMint(transaction);
             } else {
                 //System.out.println("SOL transfer");
@@ -182,12 +172,9 @@ public class Main {
         } else if (firstLine.equals("Program DeJBGdMFa1uynnnKiwrVioatTuHmNLpyFKnmB5kaFdzQ invoke [1]")) {
             //System.out.println("NFT transfer");
             text  = parseNFTtransfer(transaction);
-        } else  if (firstLine.equals("Program CJsLwbP1iu5DuUikHEJnLfANgKy6stB2uFgvBBHoyxwz invoke [1]")) {
+        } else if (firstLine.equals("Program CJsLwbP1iu5DuUikHEJnLfANgKy6stB2uFgvBBHoyxwz invoke [1]")) {
             //System.out.println("Solanart operation");
-        } else {
-            JSONObject trans = (JSONObject) resultBody.get("transaction");
-            JSONArray signatures = (JSONArray) trans.get("signatures");
-            text = (String) signatures.get(0);
+            text = parseSale(transaction);
         }
         text = replace(text);
         System.out.println(formattedDate + " " + text);
@@ -203,71 +190,20 @@ public class Main {
     // https://www.baeldung.com/httpclient-post-http-request
     public void postJson(String key) {
         try {
-            /*
-            CloseableHttpClient client = HttpClients.createDefault();
-            HttpPost httpPost = new HttpPost(URLstr);
-            String json = JSONbody;
-            StringEntity entity = new StringEntity(json);
-            httpPost.setEntity(entity);
-            httpPost.setHeader("Accept", "application/json");
-            httpPost.setHeader("Content-type", "application/json");
-            CloseableHttpResponse response = client.execute(httpPost);
-            client.close();
-            System.out.println(response.toString());
-             */
-            /*
-            CloseableHttpClient httpclient = HttpClients.createDefault();
-            HttpPost httpPost = new HttpPost(URLstr);
-            String JSON_STRING = JSONbody;
-            HttpEntity stringEntity = new StringEntity(JSON_STRING, ContentType.APPLICATION_JSON);
+            String JSON = JSONbody.replace("key", key);
+            StringEntity stringEntity = new StringEntity(JSON);
             httpPost.setEntity(stringEntity);
-            CloseableHttpResponse response2 = httpclient.execute(httpPost);
-            HttpEntity entity = response2.getEntity();
-            System.out.println(entity.toString());
-             */
-            /*
-            // https://techndeck.com/post-request-with-json-body-using-apache-httpclient/
-            CloseableHttpClient httpclient = HttpClients.createDefault();
-            HttpPost httpPost = new HttpPost(URLstr);
-            httpPost.setHeader("Accept", "application/json");
-            httpPost.setHeader("Content-type", "application/json");
-            StringEntity stringEntity = new StringEntity(JSONbody);
-            httpPost.setEntity(stringEntity);
-            System.out.println("Executing request " + httpPost.getRequestLine());
-            HttpResponse response = httpclient.execute(httpPost);
-            BufferedReader br = new BufferedReader(new InputStreamReader((response.getEntity().getContent())));
-            if (response.getStatusLine().getStatusCode() != 200) {
-                throw new RuntimeException("Failed : HTTP error code : "
-                        + response.getStatusLine().getStatusCode());
-            }
-            StringBuffer result = new StringBuffer();
-            String line = "";
-            while ((line = br.readLine()) != null) {
-                System.out.println("Response:\n" + result.append(line));
-            }
-            // https://stackoverflow.com/questions/20374156/sending-and-parsing-response-using-http-client-for-a-json-list/20376055
-            HttpEntity entity = response.getEntity();
-            Header encodingHeader = entity.getContentEncoding();
-            // you need to know the encoding to parse correctly
-            Charset encoding = encodingHeader == null ? StandardCharsets.UTF_8 :
-                    Charsets.toCharset(encodingHeader.getValue());
-            // use org.apache.http.util.EntityUtils to read json as string
-            String json = EntityUtils.toString(entity, StandardCharsets.UTF_8);
-            JSONObject o = new JSONObject(json);
-
-             */
-            HttpPost httpPost = new HttpPost(URLstr);
-            httpPost.setHeader("Accept", "application/json");
-            httpPost.setHeader("Content-type", "application/json");
-            StringEntity stringEntity = new StringEntity(key);
-            httpPost.setEntity(stringEntity);
-            CloseableHttpClient client = HttpClients.createDefault();
             CloseableHttpResponse response = client.execute(httpPost);
             HttpEntity entity = response.getEntity();
             String result = EntityUtils.toString(entity);
             JSONObject jsonObj = new JSONObject(result);
-            //writeJSONToFile(jsonObj);
-            parseTransaction(jsonObj);
+            //writeJSONToFile(key, jsonObj);
+            System.out.println(key);
+            try {
+                parseTransaction(jsonObj);
+            } catch (org.json.JSONException e) {
+                e.printStackTrace();
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -316,8 +252,16 @@ public class Main {
         JSONObject resultBody = (JSONObject) jsonObj.get("result");
         JSONObject meta = (JSONObject) resultBody.get("meta");
         JSONArray postTokenBalances = (JSONArray) meta.get("postTokenBalances");
-        String owner = (String) ((JSONObject) postTokenBalances.get(0)).get("owner");
         String mint = (String) ((JSONObject) postTokenBalances.get(0)).get("mint");
+        String owner;
+        try {
+            owner = (String) ((JSONObject) postTokenBalances.get(0)).get("owner");
+        } catch (JSONException e) {
+            JSONArray innerInstructions = (JSONArray) meta.get("innerInstructions");
+            JSONArray instructions = (JSONArray) ((JSONObject) innerInstructions.get(0)).get("instructions");
+            owner = "null";
+        }
+
         return owner + " minted " + mint;
     }
 
@@ -352,21 +296,17 @@ public class Main {
             dif[i] = post - pre;
         }
         long max = Integer.MIN_VALUE;
-        for (int i = 0; i < dif.length; i++) {
-            if (Math.abs(dif[i]) > max) {
-                max = Math.abs(dif[i]);
+        for (long l : dif) {
+            if (Math.abs(l) > max) {
+                max = Math.abs(l);
             }
         }
         return max * 1E-9;
     }
 
-    public void writeJSONToFile(JSONObject jsonObj) {
-        JSONObject resultBody = (JSONObject) jsonObj.get("result");
-        JSONObject transaction = (JSONObject) resultBody.get("transaction");
-        JSONArray signatures = (JSONArray) transaction.get("signatures");
-        String transactionKey = (String) signatures.get(0);
+    public void writeJSONToFile(String transaction, JSONObject jsonObj) {
         String JSONbody = jsonObj.toString(2);
-        Path file = Paths.get(transactionKey + ".txt");
+        Path file = Paths.get(transaction + ".txt");
         try {
             Files.write(file, Collections.singleton(JSONbody), StandardCharsets.UTF_8);
         } catch (IOException e) {
@@ -378,13 +318,44 @@ public class Main {
         try (BufferedReader br = new BufferedReader(new FileReader(file))) {
             String line;
             while ((line = br.readLine()) != null) {
-                System.out.println(line);
+                //System.out.println(line);
                 int index = line.indexOf("\t");
                 String wallet = line.substring(0, index);
                 String person = line.substring(index + 1);
                 wallets.put(wallet, person);
             }
-            wallets.forEach((k, value) -> System.out.println(k + ":" + value));
+            //wallets.forEach((k, value) -> System.out.println(k + ":" + value));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void importLastTransactions() {
+        try (BufferedReader br = new BufferedReader(new FileReader(".\\data\\LastTransactions.txt"))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                //System.out.println(line);
+                String[] pair = line.split(":");
+                String wallet = pair[0];
+                String person = pair[1];
+                lastTransactions.put(wallet, person);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void exportLastTransactions() {
+        try {
+            BufferedWriter bf = new BufferedWriter(new FileWriter(".\\data\\LastTransactions.txt"));
+            for (Map.Entry<String, String> entry : lastTransactions.entrySet()) {
+                // put key and value separated by a colon
+                bf.write(entry.getKey() + ":" + entry.getValue());
+                // new line
+                bf.newLine();
+            }
+            bf.flush();
+            bf.close();
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -392,33 +363,8 @@ public class Main {
 
     public static void main(String[] args) {
         Main main = new Main();
-        //System.out.println("# 1");
-        //main.response();
-        /*
-        System.out.println("Test");
-        main.trans(
-                "2CMwyZ1LDK9wb5PKRLLiyzbtH7qTRZY6rpJn8tkhULVCTbjPopAaawTwg7o5Yz27BSnWzZa6psvQo2Dy8t3sR8fG", // 16:41:10 CAq...RTv  bought (BASC) (EK5...KVH) from eeK...vPA for 8.69 SOL on ME
-                "32n2Wj2iso7wFLagpsHUxibKi5f3LbDLXTVswuJ8QN4hoC8iX5tBndEMqDANWPcWq595gtpipmg3uQFqGFq7qML9",
-                "BcP3zoLuCcDhuyaFGsoWchHEANtnXhEFK7M7zBAG2bYsv3ZYFAo72ybGg1vKdWuUFQEXXTE9fBufewokbU1vn3J", // 19:04:11 FYouR ... M33 sold Ahm5k ... u93 to FiT6B ... Ax2 for 3.2 SOL on Magic Eden
-                "5HHXdpzAaDpRvPBTBXgzoyxcg6xm313MvRuAQvGsS9xi8eiX1V7FVNUcng2SkDq6poiodh7yrEKM2hxWhdGEx4bU", // 19:31:14 FYouR...M33 transferred 7 SOL to DhtpVv...VTL7pL
-                "2cdHnGkCyrCm3FoSdGUtxp2KruZFepG3uy8C1mBzynF2nnWg3GMFKrfyXiZQVBjT3bksx69FcJWT7k6WSugTk6YH", // 06:37:41 FYouR ... M33 bought 8Nvra...2wK from 22EJX ... QnM for 0.24 SOL on Magic Eden
-                "5maxmFniVqDdFZsqmsop6Z5P3esSmogYabNNtdh5wAa9ehtDr5ToBCvdyvxWFZ8vrK48K8Z1ZEV4kmeSrfPb7K3u", // 19:00:26 BW..E minted 3Vj...4yv for 1.28293972 SOL on ME
-                "4yd1rzeFb4jt4cZPUDM86qnagBmnvvtT2tqvZBUn6TkXHd8F2jnuezhCeE7jfDyw2p3DxWZhqGJjFvrCnXhXA8kB", // 23:05:55 CDne6C...VS1nCi transferred Mortuary Inc Plot x2 #1174 (MORTUARY) (34q...mW3) to BW..E
-                "4hc7KDVnZud9rM6rcdCXzWKgjWwiB1zwDmokFCLsty4XQHQWrzmHunzVtgfzkSojaXX9wCwdQKKiKnuHVNpqy1ow", // 23:22:26 BWNv...KYvb bought SMB #2770 from 5Mcc...ttJB for 8.5 SOL on Alpha.Art
-                "2w5WeUvCDJ2CCbvwVkoLPQ8wvEB3muzTmFf2vacCerACE6MqXeA9P3Xx6As3UzXUp1n9P5h11v88uBBMr5K4Mr1R" // 19:08:02 FYouR ... M33 listed 3i18o ... sjR for 3.14269 SOL on Magic Eden
-        );
-         */
         System.out.println("Check accounts");
-        //main.checkAccount("FYouRQbrUbG3bzRGv3iaTAPuxWgHdH4raxxBHo7w1M33");
-        main.loadAccounts("E:\\Docs\\wallets.txt");
-        /*
-        main.checkAccounts(
-                "FYouRQbrUbG3bzRGv3iaTAPuxWgHdH4raxxBHo7w1M33",
-                "DhtpVvsq1tvUKAqudFkXocbiyMZeqti7ay5KGaVTL7pL",
-                "2Hco2qei82kADRcZdm71gLfSZULojnBY2gfPamSphXsX",
-                "BNedxPqVzNAYDfJsdCeMqegTGTTG4qbjci9WkwsXBGsx"
-        );
-         */
+        main.loadAccounts(".\\data\\wallets.txt");
         main.checkAllAccounts();
     }
 }
