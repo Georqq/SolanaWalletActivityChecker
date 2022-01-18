@@ -33,20 +33,7 @@ public class Main {
                     "params": [
                         "key",
                         {
-                            "limit": 5
-                        }
-                    ]
-                }
-            """;
-    String addresses = """
-                {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getSignaturesForAddress",
-                    "params": [
-                        "key",
-                        {
-                            "limit": 5
+                            "limit": 10
                         }
                     ]
                 }
@@ -102,7 +89,7 @@ public class Main {
         String[] walletAddresses = wallets.keySet().toArray(new String[0]);
         importLastTransactions();
         int i = 0;
-        while (i < 20) {
+        while (i < 100) {
             System.out.println(i++);
             checkAccounts(walletAddresses);
             try {
@@ -119,7 +106,7 @@ public class Main {
         try {
             //lastTransactions.forEach((k, value) -> System.out.println(k + ":" + value));
             Map<Integer, String> transactionsMap = new TreeMap<>();
-            System.out.println("Checking addresses: " + walletAddresses.length);
+            System.out.println("Checking " + walletAddresses.length + " addresses");
             for (String address : walletAddresses) {
                 //System.out.println(address);
                 String lastTransactionStr = lastTransactions.get(address);
@@ -145,17 +132,28 @@ public class Main {
                     if (transactions.length() == 0) {
                         continue;
                     }
+                    int count = 0, duplicatesCount = 0;
                     for (int i = transactions.length() - 1; i >= 0; i--) {
                         JSONObject transaction = (JSONObject) transactions.get(i);
                         int blockTime = (int) transaction.get("blockTime");
                         String transactionKey = (String) transaction.get("signature");
+                        if (transactionsMap.containsKey(blockTime)) {
+                            duplicatesCount++;
+                        }
                         transactionsMap.put(blockTime, transactionKey);
+                        count++;
+                    }
+                    int addedTransactionsCount = count - duplicatesCount;
+                    if (addedTransactionsCount == 1) {
+                        System.out.println("1 transaction was successfully added for " + address);
+                    } else {
+                        System.out.println(addedTransactionsCount + " transactions were successfully added for " + address);
                     }
                     JSONObject lastTransaction = (JSONObject) transactions.get(0);
                     String lastTransactionKey = (String) lastTransaction.get("signature");
                     lastTransactions.put(address, lastTransactionKey);
                 } catch (org.json.JSONException e) {
-                    //e.printStackTrace();
+                    e.printStackTrace();
                     JSONObject error = (JSONObject) jsonObj.get("error");
                     int code = (Integer) error.get("code");
                     String message = (String) error.get("message");
@@ -167,7 +165,7 @@ public class Main {
             }
             int size = transactionsMap.size();
             if (size > 1) {
-                System.out.println("List of transactions was formed: " + transactionsMap.size());
+                System.out.println("List of unique transactions was formed: " + transactionsMap.size());
                 // transactionsMap.forEach((k, value) -> System.out.println(k + ":" + value));
                 transactionsMap.forEach((k, value) -> postJson(value));
                 //lastTransactions.forEach((k, value) -> System.out.println(k + ":" + value));
@@ -266,7 +264,7 @@ public class Main {
             try {
                 parseTransaction(jsonObj);
             } catch (org.json.JSONException e) {
-                //e.printStackTrace();
+                e.printStackTrace();
                 JSONObject error = (JSONObject) jsonObj.get("error");
                 int code = (Integer) error.get("code");
                 String message = (String) error.get("message");
