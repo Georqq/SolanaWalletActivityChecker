@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class Main {
     int count = 0;
@@ -33,7 +34,7 @@ public class Main {
                     "params": [
                         "key",
                         {
-                            "limit": 10
+                            "limit": 5
                         }
                     ]
                 }
@@ -105,7 +106,7 @@ public class Main {
     public void checkAccounts(String... walletAddresses) {
         try {
             //lastTransactions.forEach((k, value) -> System.out.println(k + ":" + value));
-            Map<Integer, String> transactionsMap = new TreeMap<>();
+            Map<String, Integer> transactionsMap = new TreeMap<>();
             System.out.println("Checking " + walletAddresses.length + " addresses");
             for (String address : walletAddresses) {
                 //System.out.println(address);
@@ -132,18 +133,18 @@ public class Main {
                     if (transactions.length() == 0) {
                         continue;
                     }
-                    int count = 0, duplicatesCount = 0;
+                    int count = 0;
                     for (int i = transactions.length() - 1; i >= 0; i--) {
                         JSONObject transaction = (JSONObject) transactions.get(i);
+                        if (!transaction.get("err").toString().equals("null")) {
+                            continue;
+                        }
                         int blockTime = (int) transaction.get("blockTime");
                         String transactionKey = (String) transaction.get("signature");
-                        if (transactionsMap.containsKey(blockTime)) {
-                            duplicatesCount++;
-                        }
-                        transactionsMap.put(blockTime, transactionKey);
+                        transactionsMap.put(transactionKey, blockTime);
                         count++;
                     }
-                    int addedTransactionsCount = count - duplicatesCount;
+                    int addedTransactionsCount = count;
                     if (addedTransactionsCount == 1) {
                         System.out.println("1 transaction was successfully added for " + address);
                     } else {
@@ -164,11 +165,15 @@ public class Main {
                 }
             }
             int size = transactionsMap.size();
-            if (size > 1) {
+            if (size > 0) {
                 System.out.println("List of unique transactions was formed: " + transactionsMap.size());
                 // transactionsMap.forEach((k, value) -> System.out.println(k + ":" + value));
-                transactionsMap.forEach((k, value) -> postJson(value));
-                //lastTransactions.forEach((k, value) -> System.out.println(k + ":" + value));
+                //transactionsMap.forEach((k, value) -> postJson(k));
+                transactionsMap
+                        .entrySet()
+                        .stream()
+                        .sorted(Map.Entry.comparingByValue())
+                        .forEachOrdered(x -> postJson(x.getKey()));
                 exportLastTransactions();
             } else {
                 System.out.println("No new  transactions found");
@@ -260,7 +265,7 @@ public class Main {
             String result = EntityUtils.toString(entity);
             JSONObject jsonObj = new JSONObject(result);
             writeJSONToFile(".\\data\\transactions\\" + key, jsonObj);
-            System.out.println(key);
+            System.out.println("Parsing " + key);
             try {
                 parseTransaction(jsonObj);
             } catch (org.json.JSONException e) {
@@ -443,6 +448,7 @@ public class Main {
 
     public static void main(String[] args) {
         Main main = new Main();
+        /*
         main.trans(
                 "2CMwyZ1LDK9wb5PKRLLiyzbtH7qTRZY6rpJn8tkhULVCTbjPopAaawTwg7o5Yz27BSnWzZa6psvQo2Dy8t3sR8fG", // 16:41:10 CAq...RTv  bought (BASC) (EK5...KVH) from eeK...vPA for 8.69 SOL on ME
                 "32n2Wj2iso7wFLagpsHUxibKi5f3LbDLXTVswuJ8QN4hoC8iX5tBndEMqDANWPcWq595gtpipmg3uQFqGFq7qML9",
@@ -456,6 +462,8 @@ public class Main {
                 "3U1FtJyhMaxUq9oPjyxpb2UGrfisvx6qD7hzo3UXxe76QNScH7EsZNrXwUCDoqRum9FG3n18AgSwrMvsK2kWfZT", // EvAKnJ...iCkbcd PLACEd BID 30 SOL
                 "3TohRzmvgFn95zcnP5ujgHPL3CuwkSJaffZmLVCNaGQvV8kjaRHFfMnF9YnHi7JM9howKhGknD8NTwzzp9zmt4pR" // 17:25:38 CxbZgp...7Wd5gz transferred 1 ATLAS to zbFjDh...Y9WxRG
         );
+
+         */
         System.out.println("Check accounts");
         main.loadAccounts(".\\data\\wallets.txt");
         main.checkAllAccounts();
