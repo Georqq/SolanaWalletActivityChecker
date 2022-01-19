@@ -1,3 +1,4 @@
+import operations.*;
 import org.apache.http.HttpEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
@@ -14,18 +15,27 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.FormatStyle;
 import java.util.*;
-import java.util.stream.Collectors;
 
-public class Main {
+public class Main extends Thread {
     int count = 0;
     HttpPost httpPost;
     CloseableHttpClient client;
+    SolWalletActivityBot listener;
+    int time = 60;
+    boolean stopped = true;
+    final DecimalFormat df = new DecimalFormat("#.###");
 
     private Map<String, String> wallets = new HashMap<>();
     private Map<String, String> lastTransactions = new HashMap<>();
     String URLstr = "https://api.mainnet-beta.solana.com"; // "https://api.devnet.solana.com"
+    String solscanLink = """
+                <a href="https://solscan.io/tx/key">Solscan</a>""";
     String getTransactionsJSONLimit = """
                 {
                     "jsonrpc": "2.0",
@@ -34,7 +44,7 @@ public class Main {
                     "params": [
                         "key",
                         {
-                            "limit": 5
+                            "limit": 1
                         }
                     ]
                 }
@@ -62,22 +72,17 @@ public class Main {
                     ]
                 }
             """;
-    String getTokenJSON = """
-                {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getTransaction",
-                    "params": [
-                        "key"
-                    ]
-                }
-            """;
 
     public Main() {
         httpPost = new HttpPost(URLstr);
         httpPost.setHeader("Accept", "application/json");
         httpPost.setHeader("Content-type", "application/json");
         client = HttpClients.createDefault();
+    }
+
+    public Main(SolWalletActivityBot bot) {
+        this();
+        listener = bot;
     }
 
     public void trans(String... transactions) {
@@ -91,23 +96,23 @@ public class Main {
         importLastTransactions();
         int i = 0;
         while (i < 100) {
-            System.out.println(i++);
+            println(String.valueOf(i++));
             checkAccounts(walletAddresses);
             try {
-                Thread.sleep(30_000);
+                Thread.sleep(time * 1000L);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
         }
-        System.out.println("End");
-        System.out.println("Number of unknown transactions: " + count);
+        println("End");
+        println("Number of unknown transactions: " + count);
     }
 
     public void checkAccounts(String... walletAddresses) {
         try {
             //lastTransactions.forEach((k, value) -> System.out.println(k + ":" + value));
+            println("Checking " + walletAddresses.length + " addresses");
             Map<String, Integer> transactionsMap = new TreeMap<>();
-            System.out.println("Checking " + walletAddresses.length + " addresses");
             for (String address : walletAddresses) {
                 //System.out.println(address);
                 String lastTransactionStr = lastTransactions.get(address);
@@ -127,13 +132,13 @@ public class Main {
                 String result = EntityUtils.toString(entity);
                 JSONObject jsonObj = new JSONObject(result);
                 //System.out.println(key);
-                writeJSONToFile(".\\data\\wallets\\" + address, jsonObj);
+                //writeJSONToFile(".\\data\\wallets\\" + address, jsonObj);
                 try {
                     JSONArray transactions = (JSONArray) jsonObj.get("result");
                     if (transactions.length() == 0) {
                         continue;
                     }
-                    int count = 0;
+                    int addedTransactionsCount = 0;
                     for (int i = transactions.length() - 1; i >= 0; i--) {
                         JSONObject transaction = (JSONObject) transactions.get(i);
                         if (!transaction.get("err").toString().equals("null")) {
@@ -142,13 +147,12 @@ public class Main {
                         int blockTime = (int) transaction.get("blockTime");
                         String transactionKey = (String) transaction.get("signature");
                         transactionsMap.put(transactionKey, blockTime);
-                        count++;
+                        addedTransactionsCount++;
                     }
-                    int addedTransactionsCount = count;
                     if (addedTransactionsCount == 1) {
-                        System.out.println("1 transaction was successfully added for " + address);
+                        println("1 transaction was successfully added for " + address);
                     } else {
-                        System.out.println(addedTransactionsCount + " transactions were successfully added for " + address);
+                        println(addedTransactionsCount + " transactions were successfully added for " + address);
                     }
                     JSONObject lastTransaction = (JSONObject) transactions.get(0);
                     String lastTransactionKey = (String) lastTransaction.get("signature");
@@ -158,15 +162,15 @@ public class Main {
                     JSONObject error = (JSONObject) jsonObj.get("error");
                     int code = (Integer) error.get("code");
                     String message = (String) error.get("message");
-                    System.out.println("Error: " + code + ", Message: " + message);
+                    println("Error: " + code + ", Message: " + message);
                     try {
                         Thread.sleep(1500);
                     } catch (InterruptedException ignored) { }
                 }
             }
             int size = transactionsMap.size();
-            if (size > 0) {
-                System.out.println("List of unique transactions was formed: " + transactionsMap.size());
+            if (size > 10) {
+                println("List of unique transactions was formed: " + transactionsMap.size());
                 // transactionsMap.forEach((k, value) -> System.out.println(k + ":" + value));
                 //transactionsMap.forEach((k, value) -> postJson(k));
                 transactionsMap
@@ -175,8 +179,11 @@ public class Main {
                         .sorted(Map.Entry.comparingByValue())
                         .forEachOrdered(x -> postJson(x.getKey()));
                 exportLastTransactions();
+            } else if (size > 0) {
+                transactionsMap.forEach((k, value) -> postJson(k));
+                exportLastTransactions();
             } else {
-                System.out.println("No new  transactions found");
+                println("No new transactions found");
             }
         } catch (IOException e) {
             e.printStackTrace();
@@ -189,59 +196,135 @@ public class Main {
         int timeInSeconds = (Integer) resultBody.get("blockTime");
         Date date = new Date(timeInSeconds * 1000L);
         SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy HH:mm:ss");
-        //sdf.setTimeZone(TimeZone.getTimeZone("UTC+3"));
         String formattedDate = sdf.format(date);
         JSONObject trans = (JSONObject) resultBody.get("transaction");
         JSONArray signatures = (JSONArray) trans.get("signatures");
         String transactionStr = (String) signatures.get(0);
-        //System.out.println(transactionStr);
         // text
         JSONObject meta = (JSONObject) resultBody.get("meta");
         JSONArray logMessages = (JSONArray) meta.get("logMessages");
         String firstLine = (String) logMessages.get(0);
-        String text = "";
+        Operation operation = null;
         if (firstLine.contains("MEisE1HzehtrDpAAT8PnLHjpSSkRYakotTuJRPjTpo8") || firstLine.contains("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")) {
-            //System.out.println("ME operation");
             if (meta.toString().contains("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")) {
-                //System.out.println("sale operation");
-                text = parseSale(transaction);
+                operation = parseSale(transaction);
             } else {
-                //System.out.println("bid");
-                text = parseBid(transaction);
+                operation = parseBid(transaction);
             }
         } else if (firstLine.equals("Program 11111111111111111111111111111111 invoke [1]")) {
             if (logMessages.length() == 2) {
-                //System.out.println("Transfer");
-                text = parseTokenTransfer(transaction);
+                operation = parseTokenTransfer(transaction);
             } else {
-                String thirdLine = (String) logMessages.get(2);
-                if (thirdLine.equals("Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [1]")) {
-                    //System.out.println("Mint ");
-                    text = parseNMint(transaction);
+                if (logMessages.toString().contains("InitializeMint")) {
+                    operation = parseMint(transaction);
                 } else {
                     System.out.println("Not mint");
-                    text = parseTokenTransfer(transaction);
+                    operation = parseTokenTransfer(transaction);
                 }
             }
         } else if (firstLine.equals("Program DeJBGdMFa1uynnnKiwrVioatTuHmNLpyFKnmB5kaFdzQ invoke [1]")) {
             System.out.println("NFT or token transfer");
-            text  = parseNFTtransfer(transaction);
+            operation  = parseNFTtransfer(transaction);
         } else if (firstLine.equals("Program CJsLwbP1iu5DuUikHEJnLfANgKy6stB2uFgvBBHoyxwz invoke [1]")) {
-            //System.out.println("Solanart operation");
-            text = parseSale(transaction);
+            operation = parseSale(transaction);
         } else if (firstLine.equals("Program 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8 invoke [1]")) {
             System.out.println("Raydium");
-            text = parseSale(transaction);
+            operation = parseSale(transaction);
         }
-        if (!text.equals("")) {
-            text = replace(text);
-            System.out.println(formattedDate + " " + text);
-        } else {
-            count++;
+        String link = solscanLink.replace("key", transactionStr);
+        if (!(operation == null)) {
+            println(getOp(operation));
+            listener.print(formattedDate + "\n" + formatMessage(operation) + "\n" + link);
         }
     }
 
-    private String replace(String text) {
+    public void setTime(int time) {
+        this.time = time;
+        println("Time was set to " + time);
+    }
+
+    public int getTime() {
+        return time;
+    }
+
+    private String formatMessage(Operation op) {
+        if (op instanceof SaleOperation so) {
+            return formatAccount(so.buyer) + " bought " + formatToken(so.token) + " from " +
+                    formatAccount(so.seller) + " for " + formatDouble(so.amount) + " SOL on " + replaceMarketplace(so.marketplace);
+        } else if (op instanceof MintOperation mo) {
+            return formatAccount(mo.minter) + " minted " + formatToken(mo.token) + " for " + formatDouble(mo.amount) + " SOL";
+        } else if (op instanceof TransferSolanaOperation tso) {
+            return formatAccount(tso.sender) + " sent " + formatDouble(tso.amount) + " SOL to " + formatAccount(tso.receiver);
+        } else if (op instanceof TransferNFTOperation tno) {
+            return formatAccount(tno.sender) + " sent " + formatToken(tno.token) + " to " + formatAccount(tno.receiver);
+        } else if (op instanceof ListingOperation lo) {
+            return formatAccount(lo.user) + " listed " + formatToken(lo.token) + " on " + replaceMarketplace(lo.marketplace);
+        } else if (op instanceof DelistingOperation dl) {
+            return formatAccount(dl.user) + " delisted " + formatToken(dl.token) + " from " + replaceMarketplace(dl.marketplace);
+        } else if (op instanceof BidOperation bo) {
+            return formatAccount(bo.user) + " placed bid for " + formatDouble(bo.amount) + " SOL on " + replaceMarketplace(bo.marketplace);
+        } else {
+            return "Unknown operation";
+        }
+    }
+
+    private String getOp(Operation op) {
+        if (op instanceof SaleOperation so) {
+            return so.buyer + " bought " + so.token + " from " +
+                    so.seller + " for " + formatDouble(so.amount) + " SOL on " + replaceMarketplace(so.marketplace);
+        } else if (op instanceof MintOperation mo) {
+            return mo.minter + " minted " + mo.token + " for " + formatDouble(mo.amount) + " SOL";
+        } else if (op instanceof TransferSolanaOperation tso) {
+            return tso.sender + " sent " + formatDouble(tso.amount) + " SOL to " + tso.receiver;
+        } else if (op instanceof TransferNFTOperation tno) {
+            return tno.sender + " sent " + tno.token + " to " + tno.receiver;
+        } else if (op instanceof ListingOperation lo) {
+            return lo.user + " listed " + lo.token + " on " + replaceMarketplace(lo.marketplace);
+        } else if (op instanceof DelistingOperation dl) {
+            return dl.user + " delisted " + dl.token + " on " + replaceMarketplace(dl.marketplace);
+        } else if (op instanceof BidOperation bo) {
+            return bo.user + " placed bid for " + formatDouble(bo.amount) + " SOL on " + replaceMarketplace(bo.marketplace);
+        } else {
+            return "Unknown operation";
+        }
+    }
+
+    private String formatDouble(double d) {
+        return df.format(d);
+    }
+
+    private String replaceMarketplace(String address) {
+        return address
+                .replace("MEisE1HzehtrDpAAT8PnLHjpSSkRYakotTuJRPjTpo8", "MagicEden")
+                .replace("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL", "Alpha.art")
+                .replace("CJsLwbP1iu5DuUikHEJnLfANgKy6stB2uFgvBBHoyxwz", "Solanart")
+                .replace("617jbWo616ggkDxvW1Le8pV38XLbVSyWY8ae6QUmGBAU", "Solsea");
+    }
+
+    private String formatToken(String token) {
+        String accountBase = """
+                <a href="https://nft.raydium.io/item-details/key">name</a>""";
+        String formattedAccount = accountBase.replace("key", token);
+        String shortToken = token.substring(0, 3) + "..." + token.substring(token.length() - 3);
+        formattedAccount = formattedAccount.replace("name", shortToken);
+        return formattedAccount;
+    }
+
+    private String formatAccount(String wallet) {
+        String accountBase = """
+                <a href="https://nft.raydium.io/u/key?tab=activites">name</a>""";
+        String formattedAccount = accountBase.replace("key", wallet);
+        String replacement;
+        if (wallets.containsKey(wallet)) {
+            replacement = wallets.get(wallet);
+        } else {
+            replacement = wallet.substring(0, 3) + "..." + wallet.substring(wallet.length() - 3);
+        }
+        formattedAccount = formattedAccount.replace("name", replacement);
+        return formattedAccount;
+    }
+
+    private String replaceWalletWithName(String text) {
         for (Map.Entry<String, String> entry : wallets.entrySet()) {
             text = text.replace(entry.getKey(), entry.getValue());
         }
@@ -264,7 +347,7 @@ public class Main {
             HttpEntity entity = response.getEntity();
             String result = EntityUtils.toString(entity);
             JSONObject jsonObj = new JSONObject(result);
-            writeJSONToFile(".\\data\\transactions\\" + key, jsonObj);
+            //writeJSONToFile(".\\data\\transactions\\" + key, jsonObj);
             System.out.println("Parsing " + key);
             try {
                 parseTransaction(jsonObj);
@@ -284,7 +367,7 @@ public class Main {
         }
     }
 
-    public String parseSale(JSONObject jsonObj) {
+    public Operation parseSale(JSONObject jsonObj) {
         //System.out.println(jsonObj.toString(2));
         JSONObject resultBody = (JSONObject) jsonObj.get("result");
         JSONObject meta = (JSONObject) resultBody.get("meta");
@@ -298,17 +381,24 @@ public class Main {
         String newOwner = ((String) accountKeys.get(0));//(String) ((JSONObject) postTokenBalances.get(0)).get("owner");
         String mint = (String) ((JSONObject) postTokenBalances.get(0)).get("mint");
         double amount = getAmount(meta);
-        String text;
+        //String text;
         if (amount < .003) {
-            text = newOwner + " listed " + mint + " on " + marketplace;
+            //text = newOwner + " listed " + mint + " on " + marketplace;
+            if (logMessages.toString().contains("11111111111111111111111111111111")) {
+                return new ListingOperation(newOwner, mint, marketplace);
+            } else {
+                return new DelistingOperation(newOwner, mint, marketplace);
+            }
+
         } else {
             String priceStr = String.format("%,.3f", amount);
-            text = newOwner + " bought " + mint + " from " + seller + " for " + priceStr + " SOL" + " on " + marketplace;
+            //text = newOwner + " bought " + mint + " from " + seller + " for " + priceStr + " SOL" + " on " + marketplace;
+            return new SaleOperation(newOwner, seller, mint, amount, marketplace);
         }
-        return text;
+        //return text;
     }
 
-    public String parseBid(JSONObject jsonObj) {
+    public BidOperation parseBid(JSONObject jsonObj) {
         //System.out.println(jsonObj.toString(2));
         JSONObject resultBody = (JSONObject) jsonObj.get("result");
         JSONObject meta = (JSONObject) resultBody.get("meta");
@@ -319,21 +409,23 @@ public class Main {
         JSONArray accountKeys = (JSONArray) message.get("accountKeys");
         String bidPlacer = ((String) accountKeys.get(0));
         double amount = getAmount(meta);
-        String priceStr = String.format("%,.3f", amount);
-        return bidPlacer + " placed bid for " + priceStr + " SOL" + " on " + marketplace;
+        //String priceStr = String.format("%,.3f", amount);
+        return new BidOperation(bidPlacer, amount, marketplace);
+        //return bidPlacer + " placed bid for " + priceStr + " SOL" + " on " + marketplace;
     }
 
-    public String parseNFTtransfer(JSONObject jsonObj) {
+    public TransferNFTOperation parseNFTtransfer(JSONObject jsonObj) {
         JSONObject resultBody = (JSONObject) jsonObj.get("result");
         JSONObject meta = (JSONObject) resultBody.get("meta");
         JSONArray postTokenBalances = (JSONArray) meta.get("postTokenBalances");
         String oldOwner = (String) ((JSONObject) postTokenBalances.get(1)).get("owner");
         String newOwner = (String) ((JSONObject) postTokenBalances.get(0)).get("owner");
         String mint = (String) ((JSONObject) postTokenBalances.get(0)).get("mint");
-        return oldOwner + " transferred " + mint + " to " + newOwner;
+        return new TransferNFTOperation(oldOwner, newOwner, mint);
+        //return oldOwner + " transferred " + mint + " to " + newOwner;
     }
 
-    public String parseNMint(JSONObject jsonObj) {
+    public MintOperation parseMint(JSONObject jsonObj) {
         JSONObject resultBody = (JSONObject) jsonObj.get("result");
         JSONObject meta = (JSONObject) resultBody.get("meta");
         JSONArray postTokenBalances = (JSONArray) meta.get("postTokenBalances");
@@ -346,11 +438,12 @@ public class Main {
             JSONArray instructions = (JSONArray) ((JSONObject) innerInstructions.get(0)).get("instructions");
             owner = "null";
         }
-        String amount = String.format("%,.3f", getAmount(meta));
-        return owner + " minted " + mint + " for " + amount;
+        //String amount = String.format("%,.3f", getAmount(meta));
+        return new MintOperation(owner, mint, getAmount(meta));
+        //return owner + " minted " + mint + " for " + amount;
     }
 
-    public String parseTokenTransfer(JSONObject jsonObj) {
+    public TransferSolanaOperation parseTokenTransfer(JSONObject jsonObj) {
         JSONObject resultBody = (JSONObject) jsonObj.get("result");
         JSONObject transaction = (JSONObject) resultBody.get("transaction");
         JSONObject message = (JSONObject) transaction.get("message");
@@ -358,8 +451,9 @@ public class Main {
         String sender = ((String) accountKeys.get(0));//(String) ((JSONObject) postTokenBalances.get(0)).get("owner");
         String receiver = ((String) accountKeys.get(1));
         JSONObject meta = (JSONObject) resultBody.get("meta");
-        String amount = String.format("%,.3f", getAmount(meta));
-        return sender + " transferred " + amount + " SOL" + " to " + receiver;
+        //String amount = String.format("%,.3f", getAmount(meta));
+        return new TransferSolanaOperation(sender, receiver, getAmount(meta));
+        //return sender + " transferred " + amount + " SOL" + " to " + receiver;
     }
 
     public double getAmount(JSONObject meta) {
@@ -446,6 +540,44 @@ public class Main {
         }
     }
 
+    @Override
+    public synchronized void start() {
+        super.start();
+        stopped = false;
+        println("Thread started");
+    }
+
+    public synchronized void pause() {
+        stopped = true;
+        println("Thread is interrupted");
+    }
+
+    private void println(String text) {
+        System.out.println(
+                ZonedDateTime.now().format(DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT, FormatStyle.MEDIUM))
+                        + " " + text
+        );
+    }
+
+    @Override
+    public void run() {
+        String[] walletAddresses = wallets.keySet().toArray(new String[0]);
+        importLastTransactions();
+        int i = 1;
+        while (!stopped) {
+            println("Interation # " + i++);
+            checkAccounts(walletAddresses);
+            try {
+                Thread.sleep(time * 1000L);
+            } catch (InterruptedException e) {
+                stopped = true;
+                break;
+            }
+        }
+        println("End");
+        println("Number of unknown transactions: " + count);
+    }
+
     public static void main(String[] args) {
         Main main = new Main();
         /*
@@ -464,7 +596,7 @@ public class Main {
         );
 
          */
-        System.out.println("Check accounts");
+        //println("Check accounts");
         main.loadAccounts(".\\data\\wallets.txt");
         main.checkAllAccounts();
     }
