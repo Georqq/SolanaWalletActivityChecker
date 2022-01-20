@@ -44,8 +44,9 @@ public class SolWalletActivityBot extends TelegramLongPollingBot {
     public void onUpdateReceived(Update update) {
         if (update.hasMessage() && update.getMessage().hasText()) {
             String text = update.getMessage().getText();
-            if (text.equals("/run")) {
-                tracker.start();
+            if (text.equals("/run") || text.equals("/start")) {
+                sendMessage(chatID, "Starting");
+                tracker.startThreads();
                 sendMessage(chatID, "Tracker started");
             } else if (text.equals("/stop")) {
                 tracker.pause();

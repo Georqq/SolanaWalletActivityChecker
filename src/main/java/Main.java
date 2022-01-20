@@ -21,15 +21,20 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.FormatStyle;
 import java.util.*;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
-public class Main extends Thread {
+public class Main {
     int count = 0;
     HttpPost httpPost;
     CloseableHttpClient client;
     SolWalletActivityBot listener;
     int time = 60;
-    boolean stopped = true;
+    boolean isStopped = true;
     final DecimalFormat df = new DecimalFormat("#.###");
+    private BlockingQueue<String> transactionsQueue;
+    String[] walletAddresses;
 
     private Map<String, String> wallets = new HashMap<>();
     private Map<String, String> lastTransactions = new HashMap<>();
@@ -78,6 +83,7 @@ public class Main extends Thread {
         httpPost.setHeader("Accept", "application/json");
         httpPost.setHeader("Content-type", "application/json");
         client = HttpClients.createDefault();
+        transactionsQueue = new LinkedBlockingQueue<>();
     }
 
     public Main(SolWalletActivityBot bot) {
@@ -92,13 +98,13 @@ public class Main extends Thread {
     }
 
     public void checkAllAccounts() {
-        String[] walletAddresses = wallets.keySet().toArray(new String[0]);
         importLastTransactions();
         int i = 0;
         while (i < 100) {
             println(String.valueOf(i++));
             checkAccounts(walletAddresses);
             try {
+                println("Waiting for " + time * 1000L + " seconds");
                 Thread.sleep(time * 1000L);
             } catch (InterruptedException e) {
                 e.printStackTrace();
@@ -344,7 +350,7 @@ public class Main extends Thread {
             String result = EntityUtils.toString(entity);
             JSONObject jsonObj = new JSONObject(result);
             //writeJSONToFile(".\\data\\transactions\\" + key, jsonObj);
-            System.out.println("Parsing " + key);
+            println("Parsing " + key);
             try {
                 parseTransaction(jsonObj);
             } catch (org.json.JSONException e) {
@@ -499,7 +505,7 @@ public class Main extends Thread {
                 String person = line.substring(index + 1);
                 wallets.put(wallet, person);
             }
-            //wallets.forEach((k, value) -> System.out.println(k + ":" + value));
+            walletAddresses = wallets.keySet().toArray(new String[0]);
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -536,16 +542,24 @@ public class Main extends Thread {
         }
     }
 
-    @Override
-    public synchronized void start() {
-        super.start();
-        stopped = false;
-        println("Thread started");
+    public void startThreads() {
+        //super.start();
+        println("Importing last transactions");
+        importLastTransactions();
+        Thread prodThread = new Thread(new Producer(transactionsQueue));
+        println("Prod thread started");
+        Thread consThread = new Thread(new Consumer(transactionsQueue));
+        println("Con thread started");
+        //Starting producer and Consumer thread
+        prodThread.start();
+        consThread.start();
+        isStopped = false;
     }
 
     public synchronized void pause() {
-        stopped = true;
-        println("Thread is interrupted");
+        exportLastTransactions();
+        isStopped = true;
+        println("Threads are interrupted");
     }
 
     private void println(String text) {
@@ -555,23 +569,112 @@ public class Main extends Thread {
         );
     }
 
+    /*
     @Override
     public void run() {
-        String[] walletAddresses = wallets.keySet().toArray(new String[0]);
         importLastTransactions();
         int i = 1;
-        while (!stopped) {
+        while (!isStopped) {
             println("Iteration # " + i++);
             checkAccounts(walletAddresses);
             try {
                 Thread.sleep(time * 1000L);
             } catch (InterruptedException e) {
-                stopped = true;
+                isStopped = true;
                 break;
             }
         }
         println("End");
         println("Number of unknown transactions: " + count);
+    }
+     */
+
+    class Producer extends Thread {
+        private final BlockingQueue<String> transactionsQueue;
+
+        public Producer(BlockingQueue<String> transactionsQueue) {
+            this.transactionsQueue = transactionsQueue;
+        }
+
+        @Override
+        public void run() {
+            try {
+                while (!isStopped) {
+                    println("Checking addresses");
+                    for (String walletAddress : walletAddresses) {
+                        JSONArray transactions = getTransactions(walletAddress);
+                        if (transactions.length() == 0) {
+                            continue;
+                        }
+                        for (int i = transactions.length() - 1; i >= 0; i--) {
+                            JSONObject transaction = (JSONObject) transactions.get(i);
+                            if (!transaction.get("err").toString().equals("null")) {
+                                continue;
+                            }
+                            String transactionKey = (String) transaction.get("signature");
+                            println("Transaction " + transactionKey + " was added for " + walletAddress);
+                            transactionsQueue.put(transactionKey);
+                        }
+                        JSONObject lastTransaction = (JSONObject) transactions.get(0);
+                        String lastTransactionKey = (String) lastTransaction.get("signature");
+                        lastTransactions.put(walletAddress, lastTransactionKey);
+                    }
+                    println("All " + walletAddresses.length + " addresses were checked. Sleeping for " + time + " seconds");
+                    try {
+                        Thread.sleep(time * 1000L);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private JSONArray getTransactions(String walletAddress) {
+        try {
+            String lastTransactionStr = lastTransactions.get(walletAddress);
+            String JSON;
+            if (lastTransactionStr == null) {
+                JSON = getTransactionsJSONLimit.replace("key", walletAddress);
+            } else {
+                JSON = getTransactionsJSONLastTransaction
+                        .replace("key", walletAddress)
+                        .replace("lastTransaction", lastTransactionStr);
+            }
+            StringEntity stringEntity = new StringEntity(JSON);
+            httpPost.setEntity(stringEntity);
+            CloseableHttpResponse response = client.execute(httpPost);
+            HttpEntity entity = response.getEntity();
+            String result = EntityUtils.toString(entity);
+            JSONObject jsonObj = new JSONObject(result);
+            return (JSONArray) jsonObj.get("result");
+        } catch (Exception e) {
+            e.printStackTrace();
+            return new JSONArray();
+        }
+    }
+
+    class Consumer extends Thread {
+        private final BlockingQueue<String> transactionsQueue;
+
+        public Consumer(BlockingQueue<String> transactionsQueue) {
+            this.transactionsQueue = transactionsQueue;
+        }
+
+        @Override
+        public void run() {
+            try {
+                while (!isStopped) {
+                    String transactionSign = transactionsQueue.take();
+                    postJson(transactionSign);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     public static void main(String[] args) {
