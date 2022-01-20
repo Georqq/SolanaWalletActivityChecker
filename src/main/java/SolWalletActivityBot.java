@@ -53,7 +53,7 @@ public class SolWalletActivityBot extends TelegramLongPollingBot {
                 sendMessage(chatID, "Tracker stopped");
             } else if (text.contains("/time ")) {
                 int time = Integer.parseInt(text.replaceAll("\\D+",""));
-                if (time > 5) {
+                if (time > 0) {
                     tracker.setTime(time);
                     sendMessage(chatID, "Time set to " + time);
                 }

@@ -287,7 +287,7 @@ public class Main {
         } else if (op instanceof ListingOperation lo) {
             return lo.user + " listed " + lo.token + " on " + replaceMarketplace(lo.marketplace);
         } else if (op instanceof DelistingOperation dl) {
-            return dl.user + " delisted " + dl.token + " on " + replaceMarketplace(dl.marketplace);
+            return dl.user + " delisted " + dl.token + " from " + replaceMarketplace(dl.marketplace);
         } else if (op instanceof BidOperation bo) {
             return bo.user + " placed bid for " + formatDouble(bo.amount) + " SOL on " + replaceMarketplace(bo.marketplace);
         } else {
@@ -436,6 +436,7 @@ public class Main {
         try {
             owner = (String) ((JSONObject) postTokenBalances.get(0)).get("owner");
         } catch (JSONException e) {
+            e.printStackTrace();
             JSONArray innerInstructions = (JSONArray) meta.get("innerInstructions");
             JSONArray instructions = (JSONArray) ((JSONObject) innerInstructions.get(0)).get("instructions");
             owner = "null";
@@ -546,14 +547,35 @@ public class Main {
         //super.start();
         println("Importing last transactions");
         importLastTransactions();
-        Thread prodThread = new Thread(new Producer(transactionsQueue));
-        println("Prod thread started");
+        String[][] wallets = chuck(walletAddresses, 9);
+        System.out.println(Arrays.deepToString(wallets));
+        Thread prodThread1 = new Thread(new Producer(transactionsQueue, wallets[0], "1"));
+        Thread prodThread2 = new Thread(new Producer(transactionsQueue, wallets[1], "2"));
+        Thread prodThread3 = new Thread(new Producer(transactionsQueue, wallets[2],"3"));
+        Thread prodThread4 = new Thread(new Producer(transactionsQueue, wallets[3],"4"));
+        println("Prod threads started");
         Thread consThread = new Thread(new Consumer(transactionsQueue));
         println("Con thread started");
         //Starting producer and Consumer thread
-        prodThread.start();
+        prodThread1.start();
+        prodThread2.start();
+        prodThread3.start();
+        prodThread4.start();
         consThread.start();
         isStopped = false;
+    }
+
+    public String[][] chuck(String[] array, int chunkSize) {
+        int numOfChunks = (int) Math.ceil((double) array.length / chunkSize);
+        String[][] output = new String[numOfChunks][];
+        for (int i = 0; i < numOfChunks; ++i) {
+            int start = i * chunkSize;
+            int length = Math.min(array.length - start, chunkSize);
+            String[] temp = new String[length];
+            System.arraycopy(array, start, temp, 0, length);
+            output[i] = temp;
+        }
+        return output;
     }
 
     public synchronized void pause() {
@@ -591,16 +613,20 @@ public class Main {
 
     class Producer extends Thread {
         private final BlockingQueue<String> transactionsQueue;
+        private final String[] walletAddresses;
+        private final String name;
 
-        public Producer(BlockingQueue<String> transactionsQueue) {
+        public Producer(BlockingQueue<String> transactionsQueue, String[] walletAddresses, String name) {
             this.transactionsQueue = transactionsQueue;
+            this.walletAddresses = walletAddresses;
+            this.name = name;
         }
 
         @Override
         public void run() {
             try {
                 while (!isStopped) {
-                    println("Checking addresses");
+                    println(name + ": checking addresses");
                     for (String walletAddress : walletAddresses) {
                         JSONArray transactions = getTransactions(walletAddress);
                         if (transactions.length() == 0) {
@@ -619,7 +645,7 @@ public class Main {
                         String lastTransactionKey = (String) lastTransaction.get("signature");
                         lastTransactions.put(walletAddress, lastTransactionKey);
                     }
-                    println("All " + walletAddresses.length + " addresses were checked. Sleeping for " + time + " seconds");
+                    println(name + ": All " + walletAddresses.length + " addresses were checked. Sleeping for " + time + " seconds");
                     try {
                         Thread.sleep(time * 1000L);
                     } catch (InterruptedException e) {
