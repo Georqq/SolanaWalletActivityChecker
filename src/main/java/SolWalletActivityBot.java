@@ -35,16 +35,7 @@ public class SolWalletActivityBot extends TelegramLongPollingBot {
     }
 
     public void print(String text) {
-        SendMessage message = new SendMessage(); // Create a SendMessage object with mandatory fields
-        message.enableHtml(true);
-        message.disableWebPagePreview();
-        message.setChatId(chatID);
-        message.setText(text);
-        try {
-            execute(message); // Call method to send the message
-        } catch (TelegramApiException e) {
-            e.printStackTrace();
-        }
+        sendMessage(chatID, text);
     }
 
 

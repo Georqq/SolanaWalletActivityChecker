@@ -233,7 +233,7 @@ public class Main extends Thread {
         }
         String link = solscanLink.replace("key", transactionStr);
         if (!(operation == null)) {
-            println(getOp(operation));
+            println(formattedDate + " Message: " + addNameToWallet(getOp(operation)));
             listener.print(formattedDate + "\n" + formatMessage(operation) + "\n" + link);
         }
     }
@@ -324,16 +324,12 @@ public class Main extends Thread {
         return formattedAccount;
     }
 
-    private String replaceWalletWithName(String text) {
+    private String addNameToWallet(String text) {
         for (Map.Entry<String, String> entry : wallets.entrySet()) {
-            text = text.replace(entry.getKey(), entry.getValue());
+            String wallet = entry.getKey();
+            String name = entry.getValue();
+            text = text.replace(wallet, wallet + " (" + name + ")");
         }
-        text = text
-                .replace("MEisE1HzehtrDpAAT8PnLHjpSSkRYakotTuJRPjTpo8", "MagicEden")
-                .replace("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL", "Alpha.art")
-                .replace("CJsLwbP1iu5DuUikHEJnLfANgKy6stB2uFgvBBHoyxwz", "Solanart")
-                .replace("617jbWo616ggkDxvW1Le8pV38XLbVSyWY8ae6QUmGBAU", "Solsea")
-                .replace("675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8", "Raydium Liquidity Pool V4");
         return text;
     }
 
@@ -565,7 +561,7 @@ public class Main extends Thread {
         importLastTransactions();
         int i = 1;
         while (!stopped) {
-            println("Interation # " + i++);
+            println("Iteration # " + i++);
             checkAccounts(walletAddresses);
             try {
                 Thread.sleep(time * 1000L);
