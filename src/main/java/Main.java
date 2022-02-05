@@ -1,6 +1,7 @@
 import operations.*;
 import org.apache.http.HttpEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
@@ -23,7 +24,6 @@ import java.time.format.FormatStyle;
 import java.util.*;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
 
 public class Main {
     int count = 0;
@@ -35,6 +35,10 @@ public class Main {
     final DecimalFormat df = new DecimalFormat("#.###");
     private BlockingQueue<String> transactionsQueue;
     String[] walletAddresses;
+    private String lastTransactionsFilePath;
+    private String API_KEY_ID;
+    private String API_SECRET_KEY;
+
 
     private Map<String, String> wallets = new HashMap<>();
     private Map<String, String> lastTransactions = new HashMap<>();
@@ -89,6 +93,9 @@ public class Main {
     public Main(SolWalletActivityBot bot) {
         this();
         listener = bot;
+        loadAccounts(".\\data\\136412831_wallets.txt");
+        loadLastTransactions(".\\data\\136412831_lastTransactions.txt");
+        loadKeys(".\\data\\keys.txt");
     }
 
     public void trans(String... transactions) {
@@ -98,7 +105,7 @@ public class Main {
     }
 
     public void checkAllAccounts() {
-        importLastTransactions();
+        //importLastTransactions();
         int i = 0;
         while (i < 100) {
             println(String.valueOf(i++));
@@ -116,11 +123,9 @@ public class Main {
 
     public void checkAccounts(String... walletAddresses) {
         try {
-            //lastTransactions.forEach((k, value) -> System.out.println(k + ":" + value));
             println("Checking " + walletAddresses.length + " addresses");
             Map<String, Integer> transactionsMap = new TreeMap<>();
             for (String address : walletAddresses) {
-                //System.out.println(address);
                 String lastTransactionStr = lastTransactions.get(address);
                 String JSON;
                 if (lastTransactionStr == null) {
@@ -129,7 +134,6 @@ public class Main {
                     JSON = getTransactionsJSONLastTransaction
                             .replace("key", address)
                             .replace("lastTransaction", lastTransactionStr);
-                    //System.out.println(JSON);
                 }
                 StringEntity stringEntity = new StringEntity(JSON);
                 httpPost.setEntity(stringEntity);
@@ -137,8 +141,6 @@ public class Main {
                 HttpEntity entity = response.getEntity();
                 String result = EntityUtils.toString(entity);
                 JSONObject jsonObj = new JSONObject(result);
-                //System.out.println(key);
-                //writeJSONToFile(".\\data\\wallets\\" + address, jsonObj);
                 try {
                     JSONArray transactions = (JSONArray) jsonObj.get("result");
                     if (transactions.length() == 0) {
@@ -177,8 +179,6 @@ public class Main {
             int size = transactionsMap.size();
             if (size > 10) {
                 println("List of unique transactions was formed: " + transactionsMap.size());
-                // transactionsMap.forEach((k, value) -> System.out.println(k + ":" + value));
-                //transactionsMap.forEach((k, value) -> postJson(k));
                 transactionsMap
                         .entrySet()
                         .stream()
@@ -223,9 +223,6 @@ public class Main {
             } else {
                 if (logMessages.toString().contains("InitializeMint")) {
                     operation = parseMint(transaction);
-                } else {
-                    System.out.println("Not mint");
-                    operation = parseTokenTransfer(transaction);
                 }
             }
         } else if (firstLine.equals("Program DeJBGdMFa1uynnnKiwrVioatTuHmNLpyFKnmB5kaFdzQ invoke [1]")) {
@@ -251,6 +248,12 @@ public class Main {
 
     public int getTime() {
         return time;
+    }
+
+    public String getWallets() {
+        StringBuilder sb = new StringBuilder();
+        wallets.forEach((k, value) -> sb.append(k).append(":").append(value).append("\n"));
+        return sb.toString();
     }
 
     private String formatMessage(Operation op) {
@@ -311,8 +314,10 @@ public class Main {
         String accountBase = """
                 <a href="https://nft.raydium.io/item-details/key">name</a>""";
         String formattedAccount = accountBase.replace("key", token);
+        String tokenName = getNFTName(token);
         String shortToken = token.substring(0, 3) + "..." + token.substring(token.length() - 3);
-        formattedAccount = formattedAccount.replace("name", shortToken);
+        tokenName = tokenName.length() > 0 ? tokenName : shortToken;
+        formattedAccount = formattedAccount.replace("name", tokenName);
         return formattedAccount;
     }
 
@@ -370,7 +375,6 @@ public class Main {
     }
 
     public Operation parseSale(JSONObject jsonObj) {
-        //System.out.println(jsonObj.toString(2));
         JSONObject resultBody = (JSONObject) jsonObj.get("result");
         JSONObject meta = (JSONObject) resultBody.get("meta");
         JSONArray postTokenBalances = (JSONArray) meta.get("postTokenBalances");
@@ -380,12 +384,10 @@ public class Main {
         JSONObject message = (JSONObject) transaction.get("message");
         JSONArray accountKeys = (JSONArray) message.get("accountKeys");
         String seller = ((String) accountKeys.get(2));
-        String newOwner = ((String) accountKeys.get(0));//(String) ((JSONObject) postTokenBalances.get(0)).get("owner");
+        String newOwner = ((String) accountKeys.get(0));
         String mint = (String) ((JSONObject) postTokenBalances.get(0)).get("mint");
         double amount = getAmount(meta);
-        //String text;
         if (amount < .003) {
-            //text = newOwner + " listed " + mint + " on " + marketplace;
             if (logMessages.toString().contains("11111111111111111111111111111111")) {
                 return new ListingOperation(newOwner, mint, marketplace);
             } else {
@@ -393,15 +395,12 @@ public class Main {
             }
 
         } else {
-            String priceStr = String.format("%,.3f", amount);
-            //text = newOwner + " bought " + mint + " from " + seller + " for " + priceStr + " SOL" + " on " + marketplace;
             return new SaleOperation(newOwner, seller, mint, amount, marketplace);
         }
         //return text;
     }
 
     public BidOperation parseBid(JSONObject jsonObj) {
-        //System.out.println(jsonObj.toString(2));
         JSONObject resultBody = (JSONObject) jsonObj.get("result");
         JSONObject meta = (JSONObject) resultBody.get("meta");
         JSONArray logMessages = (JSONArray) meta.get("logMessages");
@@ -411,9 +410,7 @@ public class Main {
         JSONArray accountKeys = (JSONArray) message.get("accountKeys");
         String bidPlacer = ((String) accountKeys.get(0));
         double amount = getAmount(meta);
-        //String priceStr = String.format("%,.3f", amount);
         return new BidOperation(bidPlacer, amount, marketplace);
-        //return bidPlacer + " placed bid for " + priceStr + " SOL" + " on " + marketplace;
     }
 
     public TransferNFTOperation parseNFTtransfer(JSONObject jsonObj) {
@@ -437,13 +434,9 @@ public class Main {
             owner = (String) ((JSONObject) postTokenBalances.get(0)).get("owner");
         } catch (JSONException e) {
             e.printStackTrace();
-            JSONArray innerInstructions = (JSONArray) meta.get("innerInstructions");
-            JSONArray instructions = (JSONArray) ((JSONObject) innerInstructions.get(0)).get("instructions");
             owner = "null";
         }
-        //String amount = String.format("%,.3f", getAmount(meta));
         return new MintOperation(owner, mint, getAmount(meta));
-        //return owner + " minted " + mint + " for " + amount;
     }
 
     public TransferSolanaOperation parseTokenTransfer(JSONObject jsonObj) {
@@ -500,7 +493,6 @@ public class Main {
         try (BufferedReader br = new BufferedReader(new FileReader(file))) {
             String line;
             while ((line = br.readLine()) != null) {
-                //System.out.println(line);
                 int index = line.indexOf("\t");
                 String wallet = line.substring(0, index);
                 String person = line.substring(index + 1);
@@ -512,14 +504,15 @@ public class Main {
         }
     }
 
-    public void importLastTransactions() {
-        try (BufferedReader br = new BufferedReader(new FileReader(".\\data\\LastTransactions.txt"))) {
+    public void loadLastTransactions(String filePath) {
+        try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
             String line;
             while ((line = br.readLine()) != null) {
                 //System.out.println(line);
                 String[] pair = line.split(":");
                 String wallet = pair[0];
                 String person = pair[1];
+                lastTransactionsFilePath = filePath;
                 lastTransactions.put(wallet, person);
             }
         } catch (IOException e) {
@@ -527,9 +520,20 @@ public class Main {
         }
     }
 
+    private void loadKeys(String filePath) {
+        try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
+            String line = br.readLine();
+            String[] pair = line.split(":");
+            API_KEY_ID = pair[0];
+            API_SECRET_KEY = pair[1];
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
     public void exportLastTransactions() {
         try {
-            BufferedWriter bf = new BufferedWriter(new FileWriter(".\\data\\LastTransactions.txt"));
+            BufferedWriter bf = new BufferedWriter(new FileWriter(lastTransactionsFilePath));
             for (Map.Entry<String, String> entry : lastTransactions.entrySet()) {
                 // put key and value separated by a colon
                 bf.write(entry.getKey() + ":" + entry.getValue());
@@ -543,10 +547,31 @@ public class Main {
         }
     }
 
+    private String getNFTName(String token) {
+        String URI = "https://api.blockchainapi.com/v1/solana/nft/mainnet-beta/";
+        HttpGet httpGet = new HttpGet(URI + token);
+        httpGet.setHeader("APIKeyID", "3jz1EVE5cyuzmJ3");
+        httpGet.setHeader("APISecretKey", "XyTtsHR8ZkmEpG3");
+        CloseableHttpClient client = HttpClients.createDefault();
+        String name = "";
+        try {
+            CloseableHttpResponse response = client.execute(httpGet);
+            HttpEntity entity = response.getEntity();
+            String result = EntityUtils.toString(entity);
+            JSONObject res = new JSONObject(result);
+            JSONObject data = (JSONObject) res.get("data");
+            name = (String) data.get("name");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return name;
+    }
+
     public void startThreads() {
         //super.start();
-        println("Importing last transactions");
-        importLastTransactions();
+        println("First run");
+        checkAccounts(walletAddresses);
+        println("First run ended");
         String[][] wallets = chuck(walletAddresses, 9);
         System.out.println(Arrays.deepToString(wallets));
         Thread prodThread1 = new Thread(new Producer(transactionsQueue, wallets[0], "1"));
@@ -590,26 +615,6 @@ public class Main {
                         + " " + text
         );
     }
-
-    /*
-    @Override
-    public void run() {
-        importLastTransactions();
-        int i = 1;
-        while (!isStopped) {
-            println("Iteration # " + i++);
-            checkAccounts(walletAddresses);
-            try {
-                Thread.sleep(time * 1000L);
-            } catch (InterruptedException e) {
-                isStopped = true;
-                break;
-            }
-        }
-        println("End");
-        println("Number of unknown transactions: " + count);
-    }
-     */
 
     class Producer extends Thread {
         private final BlockingQueue<String> transactionsQueue;
@@ -701,28 +706,5 @@ public class Main {
                 Thread.currentThread().interrupt();
             }
         }
-    }
-
-    public static void main(String[] args) {
-        Main main = new Main();
-        /*
-        main.trans(
-                "2CMwyZ1LDK9wb5PKRLLiyzbtH7qTRZY6rpJn8tkhULVCTbjPopAaawTwg7o5Yz27BSnWzZa6psvQo2Dy8t3sR8fG", // 16:41:10 CAq...RTv  bought (BASC) (EK5...KVH) from eeK...vPA for 8.69 SOL on ME
-                "32n2Wj2iso7wFLagpsHUxibKi5f3LbDLXTVswuJ8QN4hoC8iX5tBndEMqDANWPcWq595gtpipmg3uQFqGFq7qML9",
-                "BcP3zoLuCcDhuyaFGsoWchHEANtnXhEFK7M7zBAG2bYsv3ZYFAo72ybGg1vKdWuUFQEXXTE9fBufewokbU1vn3J", // 19:04:11 FYouR ... M33 sold Ahm5k ... u93 to FiT6B ... Ax2 for 3.2 SOL on Magic Eden
-                "5HHXdpzAaDpRvPBTBXgzoyxcg6xm313MvRuAQvGsS9xi8eiX1V7FVNUcng2SkDq6poiodh7yrEKM2hxWhdGEx4bU", // 19:31:14 FYouR...M33 transferred 7 SOL to DhtpVv...VTL7pL
-                "2cdHnGkCyrCm3FoSdGUtxp2KruZFepG3uy8C1mBzynF2nnWg3GMFKrfyXiZQVBjT3bksx69FcJWT7k6WSugTk6YH", // 06:37:41 FYouR ... M33 bought 8Nvra...2wK from 22EJX ... QnM for 0.24 SOL on Magic Eden
-                "5maxmFniVqDdFZsqmsop6Z5P3esSmogYabNNtdh5wAa9ehtDr5ToBCvdyvxWFZ8vrK48K8Z1ZEV4kmeSrfPb7K3u", // 19:00:26 BW..E minted 3Vj...4yv for 1.28293972 SOL on ME
-                "4yd1rzeFb4jt4cZPUDM86qnagBmnvvtT2tqvZBUn6TkXHd8F2jnuezhCeE7jfDyw2p3DxWZhqGJjFvrCnXhXA8kB", // 23:05:55 CDne6C...VS1nCi transferred Mortuary Inc Plot x2 #1174 (MORTUARY) (34q...mW3) to BW..E
-                "4hc7KDVnZud9rM6rcdCXzWKgjWwiB1zwDmokFCLsty4XQHQWrzmHunzVtgfzkSojaXX9wCwdQKKiKnuHVNpqy1ow", // 23:22:26 BWNv...KYvb bought SMB #2770 from 5Mcc...ttJB for 8.5 SOL on Alpha.Art
-                "2w5WeUvCDJ2CCbvwVkoLPQ8wvEB3muzTmFf2vacCerACE6MqXeA9P3Xx6As3UzXUp1n9P5h11v88uBBMr5K4Mr1R", // 19:08:02 FYouR ... M33 listed 3i18o ... sjR for 3.14269 SOL on Magic Eden
-                "3U1FtJyhMaxUq9oPjyxpb2UGrfisvx6qD7hzo3UXxe76QNScH7EsZNrXwUCDoqRum9FG3n18AgSwrMvsK2kWfZT", // EvAKnJ...iCkbcd PLACEd BID 30 SOL
-                "3TohRzmvgFn95zcnP5ujgHPL3CuwkSJaffZmLVCNaGQvV8kjaRHFfMnF9YnHi7JM9howKhGknD8NTwzzp9zmt4pR" // 17:25:38 CxbZgp...7Wd5gz transferred 1 ATLAS to zbFjDh...Y9WxRG
-        );
-
-         */
-        //println("Check accounts");
-        main.loadAccounts(".\\data\\wallets.txt");
-        main.checkAllAccounts();
     }
 }
