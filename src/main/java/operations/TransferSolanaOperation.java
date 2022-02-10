@@ -1,9 +1,9 @@
 package operations;
 
 public class TransferSolanaOperation extends Operation {
-    public String sender;
-    public String receiver;
-    public double amount;
+    public final String sender;
+    public final String receiver;
+    public final double amount;
 
     public TransferSolanaOperation(String sender, String receiver, double amount) {
         this.sender = sender;

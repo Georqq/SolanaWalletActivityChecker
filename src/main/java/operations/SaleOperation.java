@@ -1,11 +1,11 @@
 package operations;
 
 public class SaleOperation extends Operation {
-    public String buyer;
-    public String seller;
-    public String token;
-    public double amount;
-    public String marketplace;
+    public final String buyer;
+    public final String seller;
+    public final String token;
+    public final double amount;
+    public final String marketplace;
 
     public SaleOperation(String buyer, String seller, String token, double amount, String marketplace) {
         this.buyer = buyer;

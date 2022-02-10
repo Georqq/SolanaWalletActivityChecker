@@ -13,12 +13,13 @@ import java.io.*;
 import java.util.List;
 import java.util.Map;
 
-public class SolWalletActivityBot extends TelegramLongPollingBot {
+public class SolWalletActivityBot extends TelegramLongPollingBot implements WalletActivityListener, FloorPriceChangeListener {
     private static String BOT_NAME;
     private static String BOT_TOKEN;
 
-    private String chatID = "136412831";
-    private Main tracker;
+    private final String chatID = "136412831";
+    private final Main tracker;
+    private final NFTCollectionFloorMonitor monitor;
 
     public static void main(String[] args)  {
         try {
@@ -34,8 +35,10 @@ public class SolWalletActivityBot extends TelegramLongPollingBot {
     public SolWalletActivityBot() {
         loadBotDataFromFile();
         tracker = new Main(this);
+        monitor = new NFTCollectionFloorMonitor(this, "./data/136412831_collections.txt");
     }
 
+    @Override
     public void print(String text) {
         sendMessage(chatID, text);
     }
@@ -44,26 +47,38 @@ public class SolWalletActivityBot extends TelegramLongPollingBot {
     public void onUpdateReceived(Update update) {
         if (update.hasMessage() && update.getMessage().hasText()) {
             String text = update.getMessage().getText();
-            if (text.equals("/run") || text.equals("/start")) {
+            if (text.equalsIgnoreCase("/run") || text.equalsIgnoreCase("/start")) {
                 sendMessage(chatID, "Starting");
+                monitor.startMonitor();
+                sendMessage(chatID, "Collections monitor started");
                 tracker.startThreads();
                 sendMessage(chatID, "Tracker started");
-            } else if (text.equals("/stop")) {
+            } else if (text.equalsIgnoreCase("/stop")) {
                 tracker.pause();
+                monitor.stopMonitor();
                 sendMessage(chatID, "Tracker stopped");
-            } else if (text.contains("/time ")) {
+            }  else if (text.matches("/time \\d+")) {
                 int time = Integer.parseInt(text.replaceAll("\\D+",""));
                 if (time > 0) {
                     tracker.setTime(time);
-                    sendMessage(chatID, "Time set to " + time);
+                    sendMessage(chatID, "Tracker time set to " + time);
                 }
-            } else if (text.contains("/getTime")) {
-                sendMessage(chatID, String.valueOf(tracker.getTime()));
-            } else if (text.contains("/wallets")) {
+            } else if (text.matches("/mon[tT]ime \\d+")) {
+                int time = Integer.parseInt(text.replaceAll("\\D+",""));
+                if (time > 0) {
+                    monitor.setSleepTime(time);
+                    sendMessage(chatID, "Monitor time set to " + time);
+                }
+            }else if (text.equalsIgnoreCase("/getTime")) {
+                sendMessage(chatID,
+                        "Tracker sleep time: " + tracker.getTime() + "\nMonitor sleep time: " + monitor.getSleepTime()
+                );
+            } else if (text.equalsIgnoreCase("/wallets")) {
                 sendMessage(chatID, tracker.getWallets());
-            } else if (text.contains("/get")) {
+            } else if (text.equalsIgnoreCase("/get")) {
                 sendDocument(chatID, "wallets.txt");
                 sendDocument(chatID, "lastTransactions.txt");
+                sendDocument(chatID, "collections.txt");
                 sendMessage(chatID, "Documents were sent");
             } else {
                 sendMessage(chatID, text);
@@ -98,6 +113,9 @@ public class SolWalletActivityBot extends TelegramLongPollingBot {
                 } else if (filePath.contains("lastTran")) {
                     tracker.loadLastTransactions(filePath);
                     sendMessage(chatID, "Last transactions were saved");
+                } else if (filePath.contains("collections")) {
+                    monitor.setCollections(filePath);
+                    sendMessage(chatID, "Collections were saved");
                 }
             } catch (TelegramApiException e) {
                 e.printStackTrace();
@@ -146,11 +164,6 @@ public class SolWalletActivityBot extends TelegramLongPollingBot {
         return BOT_TOKEN;
     }
 
-    @Override
-    public void onRegister() {
-        super.onRegister();
-    }
-
     public void loadBotDataFromFile() {
         try (BufferedReader br = new BufferedReader(new FileReader(".\\data\\bot.txt"))) {
             BOT_NAME = br.readLine();
@@ -161,5 +174,20 @@ public class SolWalletActivityBot extends TelegramLongPollingBot {
             BOT_NAME = getenv.get("BOT_NAME");
             BOT_TOKEN = getenv.get("BOT_TOKEN");
         }
+    }
+
+    @Override
+    public void send(NFT data) {
+        String text = """
+                <a href="https://nft.raydium.io/item-details/key">name</a>
+                price prp
+                floor flp
+                24hr avg price avpr""";
+        text = text.replace("key", data.getMintAddress())
+                .replace("name", data.getName())
+                .replace("prp", Output.df.format(data.getPrice()))
+                .replace("flp", Output.df.format(data.getCollectionFloorPrice()))
+                .replace("avpr", Output.df.format(data.getCollectionAvgPrice24hr()));
+        sendMessage(chatID, text);
     }
 }

@@ -1,9 +1,9 @@
 package operations;
 
 public class TransferNFTOperation extends Operation {
-    public String sender;
-    public String receiver;
-    public String token;
+    public final String sender;
+    public final String receiver;
+    public final String token;
 
     public TransferNFTOperation(String sender, String receiver, String token) {
         this.sender = sender;

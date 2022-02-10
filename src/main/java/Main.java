@@ -12,40 +12,34 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.*;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.format.FormatStyle;
 import java.util.*;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
 public class Main {
-    int count = 0;
+    final int count = 0;
     HttpPost httpPost;
     CloseableHttpClient client;
-    SolWalletActivityBot listener;
-    int time = 60;
+    final WalletActivityListener listener;
+    int time = 45;
     boolean isStopped = true;
-    final DecimalFormat df = new DecimalFormat("#.###");
     private BlockingQueue<String> transactionsQueue;
     String[] walletAddresses;
     private String lastTransactionsFilePath;
-    private String API_KEY_ID;
-    private String API_SECRET_KEY;
 
+    private final Map<String, String> wallets = new HashMap<>();
+    private final Map<String, String> lastTransactions = new HashMap<>();
 
-    private Map<String, String> wallets = new HashMap<>();
-    private Map<String, String> lastTransactions = new HashMap<>();
-    String URLstr = "https://api.mainnet-beta.solana.com"; // "https://api.devnet.solana.com"
-    String solscanLink = """
+    final String URLstr = "https://api.mainnet-beta.solana.com"; // "https://api.devnet.solana.com"
+    final String solscanLink = """
                 <a href="https://solscan.io/tx/key">Solscan</a>""";
-    String getTransactionsJSONLimit = """
+    final String getTransactionsJSONLimit = """
                 {
                     "jsonrpc": "2.0",
                     "id": 1,
@@ -58,7 +52,7 @@ public class Main {
                     ]
                 }
             """;
-    String getTransactionsJSONLastTransaction = """
+    final String getTransactionsJSONLastTransaction = """
                 {
                     "jsonrpc": "2.0",
                     "id": 1,
@@ -71,7 +65,7 @@ public class Main {
                     ]
                 }
             """;
-    String JSONbody = """
+    final String JSONbody = """
                 {
                     "jsonrpc": "2.0",
                     "id": 1,
@@ -82,20 +76,20 @@ public class Main {
                 }
             """;
 
-    public Main() {
+    public Main(WalletActivityListener listener) {
+        init();
+        this.listener = listener;
+        loadAccounts(".\\data\\136412831_wallets.txt");
+        loadLastTransactions(".\\data\\136412831_lastTransactions.txt");
+        loadKeys(".\\data\\keys.txt");
+    }
+
+    private void init() {
         httpPost = new HttpPost(URLstr);
         httpPost.setHeader("Accept", "application/json");
         httpPost.setHeader("Content-type", "application/json");
         client = HttpClients.createDefault();
         transactionsQueue = new LinkedBlockingQueue<>();
-    }
-
-    public Main(SolWalletActivityBot bot) {
-        this();
-        listener = bot;
-        loadAccounts(".\\data\\136412831_wallets.txt");
-        loadLastTransactions(".\\data\\136412831_lastTransactions.txt");
-        loadKeys(".\\data\\keys.txt");
     }
 
     public void trans(String... transactions) {
@@ -105,25 +99,26 @@ public class Main {
     }
 
     public void checkAllAccounts() {
-        //importLastTransactions();
         int i = 0;
         while (i < 100) {
-            println(String.valueOf(i++));
+            Output.println(String.valueOf(i++));
             checkAccounts(walletAddresses);
             try {
-                println("Waiting for " + time * 1000L + " seconds");
+                Output.println("Waiting for " + time * 1000L + " seconds");
                 Thread.sleep(time * 1000L);
             } catch (InterruptedException e) {
                 e.printStackTrace();
+                Thread.currentThread().interrupt();
+                return;
             }
         }
-        println("End");
-        println("Number of unknown transactions: " + count);
+        Output.println("End");
+        Output.println("Number of unknown transactions: " + count);
     }
 
     public void checkAccounts(String... walletAddresses) {
         try {
-            println("Checking " + walletAddresses.length + " addresses");
+            Output.println("Checking " + walletAddresses.length + " addresses");
             Map<String, Integer> transactionsMap = new TreeMap<>();
             for (String address : walletAddresses) {
                 String lastTransactionStr = lastTransactions.get(address);
@@ -158,9 +153,9 @@ public class Main {
                         addedTransactionsCount++;
                     }
                     if (addedTransactionsCount == 1) {
-                        println("1 transaction was successfully added for " + address);
+                        Output.println("1 transaction was successfully added for " + address);
                     } else {
-                        println(addedTransactionsCount + " transactions were successfully added for " + address);
+                        Output.println(addedTransactionsCount + " transactions were successfully added for " + address);
                     }
                     JSONObject lastTransaction = (JSONObject) transactions.get(0);
                     String lastTransactionKey = (String) lastTransaction.get("signature");
@@ -170,15 +165,19 @@ public class Main {
                     JSONObject error = (JSONObject) jsonObj.get("error");
                     int code = (Integer) error.get("code");
                     String message = (String) error.get("message");
-                    println("Error: " + code + ", Message: " + message);
+                    Output.println("Error: " + code + ", Message: " + message);
                     try {
                         Thread.sleep(1500);
-                    } catch (InterruptedException ignored) { }
+                    } catch (InterruptedException ex) {
+                        ex.printStackTrace();
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
                 }
             }
             int size = transactionsMap.size();
             if (size > 10) {
-                println("List of unique transactions was formed: " + transactionsMap.size());
+                Output.println("List of unique transactions was formed: " + transactionsMap.size());
                 transactionsMap
                         .entrySet()
                         .stream()
@@ -189,7 +188,7 @@ public class Main {
                 transactionsMap.forEach((k, value) -> postJson(k));
                 exportLastTransactions();
             } else {
-                println("No new transactions found");
+                Output.println("No new transactions found");
             }
         } catch (IOException e) {
             e.printStackTrace();
@@ -236,14 +235,14 @@ public class Main {
         }
         String link = solscanLink.replace("key", transactionStr);
         if (!(operation == null)) {
-            println(formattedDate + " Message: " + addNameToWallet(getOp(operation)));
+            Output.println(formattedDate + " Message: " + addNameToWallet(getOp(operation)));
             listener.print(formattedDate + "\n" + formatMessage(operation) + "\n" + link);
         }
     }
 
     public void setTime(int time) {
         this.time = time;
-        println("Time was set to " + time);
+        Output.println("Time was set to " + time);
     }
 
     public int getTime() {
@@ -267,7 +266,7 @@ public class Main {
         } else if (op instanceof TransferNFTOperation tno) {
             return formatAccount(tno.sender) + " sent " + formatToken(tno.token) + " to " + formatAccount(tno.receiver);
         } else if (op instanceof ListingOperation lo) {
-            return formatAccount(lo.user) + " listed " + formatToken(lo.token) + " on " + replaceMarketplace(lo.marketplace);
+            return formatAccount(lo.user) + " listed " + formatToken(lo.token) + (lo.price > 0. ? " for " + lo.price + " SOL" : "") + " on " + replaceMarketplace(lo.marketplace);
         } else if (op instanceof DelistingOperation dl) {
             return formatAccount(dl.user) + " delisted " + formatToken(dl.token) + " from " + replaceMarketplace(dl.marketplace);
         } else if (op instanceof BidOperation bo) {
@@ -288,7 +287,7 @@ public class Main {
         } else if (op instanceof TransferNFTOperation tno) {
             return tno.sender + " sent " + tno.token + " to " + tno.receiver;
         } else if (op instanceof ListingOperation lo) {
-            return lo.user + " listed " + lo.token + " on " + replaceMarketplace(lo.marketplace);
+            return lo.user + " listed " + lo.token + (lo.price > 0. ? " for " + lo.price + " SOL": "") + " on " + replaceMarketplace(lo.marketplace);
         } else if (op instanceof DelistingOperation dl) {
             return dl.user + " delisted " + dl.token + " from " + replaceMarketplace(dl.marketplace);
         } else if (op instanceof BidOperation bo) {
@@ -299,7 +298,7 @@ public class Main {
     }
 
     private String formatDouble(double d) {
-        return df.format(d);
+        return Output.df.format(d);
     }
 
     private String replaceMarketplace(String address) {
@@ -355,7 +354,7 @@ public class Main {
             String result = EntityUtils.toString(entity);
             JSONObject jsonObj = new JSONObject(result);
             //writeJSONToFile(".\\data\\transactions\\" + key, jsonObj);
-            println("Parsing " + key);
+            Output.println("Parsing " + key);
             try {
                 parseTransaction(jsonObj);
             } catch (org.json.JSONException e) {
@@ -366,9 +365,14 @@ public class Main {
                 System.out.println("Error: " + code + ", Message: " + message);
                 try {
                     Thread.sleep(1500);
-                } catch (InterruptedException ignored) { }
+                } catch (InterruptedException ex) {
+                    ex.printStackTrace();
+                    Thread.currentThread().interrupt();
+                    return;
+                }
                 postJson(key);
             }
+            response.close();
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -389,7 +393,7 @@ public class Main {
         double amount = getAmount(meta);
         if (amount < .003) {
             if (logMessages.toString().contains("11111111111111111111111111111111")) {
-                return new ListingOperation(newOwner, mint, marketplace);
+                return new ListingOperation(newOwner, mint, marketplace, getNFTPrice(mint, marketplace));
             } else {
                 return new DelistingOperation(newOwner, mint, marketplace);
             }
@@ -444,12 +448,10 @@ public class Main {
         JSONObject transaction = (JSONObject) resultBody.get("transaction");
         JSONObject message = (JSONObject) transaction.get("message");
         JSONArray accountKeys = (JSONArray) message.get("accountKeys");
-        String sender = ((String) accountKeys.get(0));//(String) ((JSONObject) postTokenBalances.get(0)).get("owner");
+        String sender = ((String) accountKeys.get(0));
         String receiver = ((String) accountKeys.get(1));
         JSONObject meta = (JSONObject) resultBody.get("meta");
-        //String amount = String.format("%,.3f", getAmount(meta));
         return new TransferSolanaOperation(sender, receiver, getAmount(meta));
-        //return sender + " transferred " + amount + " SOL" + " to " + receiver;
     }
 
     public double getAmount(JSONObject meta) {
@@ -480,10 +482,10 @@ public class Main {
     }
 
     public void writeJSONToFile(String transaction, JSONObject jsonObj) {
-        String JSONbody = jsonObj.toString(2);
+        String JSONBody = jsonObj.toString(2);
         Path file = Paths.get(transaction + ".txt");
         try {
-            Files.write(file, Collections.singleton(JSONbody), StandardCharsets.UTF_8);
+            Files.write(file, Collections.singleton(JSONBody), StandardCharsets.UTF_8);
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -508,7 +510,6 @@ public class Main {
         try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
             String line;
             while ((line = br.readLine()) != null) {
-                //System.out.println(line);
                 String[] pair = line.split(":");
                 String wallet = pair[0];
                 String person = pair[1];
@@ -524,16 +525,15 @@ public class Main {
         try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
             String line = br.readLine();
             String[] pair = line.split(":");
-            API_KEY_ID = pair[0];
-            API_SECRET_KEY = pair[1];
+            String API_KEY_ID = pair[0];
+            String API_SECRET_KEY = pair[1];
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
     public void exportLastTransactions() {
-        try {
-            BufferedWriter bf = new BufferedWriter(new FileWriter(lastTransactionsFilePath));
+        try (BufferedWriter bf = new BufferedWriter(new FileWriter(lastTransactionsFilePath))) {
             for (Map.Entry<String, String> entry : lastTransactions.entrySet()) {
                 // put key and value separated by a colon
                 bf.write(entry.getKey() + ":" + entry.getValue());
@@ -541,47 +541,66 @@ public class Main {
                 bf.newLine();
             }
             bf.flush();
-            bf.close();
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
-    private String getNFTName(String token) {
-        String URI = "https://api.blockchainapi.com/v1/solana/nft/mainnet-beta/";
+    public String getNFTName(String token) {
+        String URI = "https://api-mainnet.magiceden.io/rpc/getNFTByMintAddress/";
         HttpGet httpGet = new HttpGet(URI + token);
-        httpGet.setHeader("APIKeyID", "3jz1EVE5cyuzmJ3");
-        httpGet.setHeader("APISecretKey", "XyTtsHR8ZkmEpG3");
-        CloseableHttpClient client = HttpClients.createDefault();
+        httpGet.setHeader("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
+        httpGet.setHeader("User-Agent", "Mozilla/5.0");
         String name = "";
-        try {
-            CloseableHttpResponse response = client.execute(httpGet);
+        try (CloseableHttpResponse response = client.execute(httpGet)) {
             HttpEntity entity = response.getEntity();
             String result = EntityUtils.toString(entity);
             JSONObject res = new JSONObject(result);
-            JSONObject data = (JSONObject) res.get("data");
-            name = (String) data.get("name");
+            JSONObject results = (JSONObject) res.get("results");
+            name = (String) results.get("title");
         } catch (Exception e) {
             e.printStackTrace();
         }
         return name;
     }
 
+    private double getNFTPrice(String token, String marketplace) {
+        String URI = "https://api-mainnet.magiceden.io/rpc/getNFTByMintAddress/";
+        HttpGet httpGet = new HttpGet(URI + token);
+        httpGet.setHeader("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
+        httpGet.setHeader("User-Agent", "Mozilla/5.0");
+        double price = 0.;
+        try (CloseableHttpResponse response = client.execute(httpGet)) {
+            HttpEntity entity = response.getEntity();
+            String result = EntityUtils.toString(entity);
+            JSONObject res = new JSONObject(result);
+            JSONObject results = (JSONObject) res.get("results");
+            Object priceObj = results.get("price");
+            if (priceObj instanceof BigDecimal bigDecimalPrice) {
+                price = bigDecimalPrice.doubleValue();
+            } else if (priceObj instanceof Integer) {
+                price = (double) (int) priceObj;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return price;
+    }
+
     public void startThreads() {
-        //super.start();
-        println("First run");
+        Output.println("First run");
         checkAccounts(walletAddresses);
-        println("First run ended");
+        Output.println("First run ended");
         String[][] wallets = chuck(walletAddresses, 9);
         System.out.println(Arrays.deepToString(wallets));
-        Thread prodThread1 = new Thread(new Producer(transactionsQueue, wallets[0], "1"));
-        Thread prodThread2 = new Thread(new Producer(transactionsQueue, wallets[1], "2"));
-        Thread prodThread3 = new Thread(new Producer(transactionsQueue, wallets[2],"3"));
-        Thread prodThread4 = new Thread(new Producer(transactionsQueue, wallets[3],"4"));
-        println("Prod threads started");
+        Thread prodThread1 = new Thread(new Producer(transactionsQueue, wallets[0], "Thread 1"));
+        Thread prodThread2 = new Thread(new Producer(transactionsQueue, wallets[1], "Thread 2"));
+        Thread prodThread3 = new Thread(new Producer(transactionsQueue, wallets[2],"Thread 3"));
+        Thread prodThread4 = new Thread(new Producer(transactionsQueue, wallets[3],"Thread 4"));
+        Output.println("Prod threads started");
         Thread consThread = new Thread(new Consumer(transactionsQueue));
-        println("Con thread started");
-        //Starting producer and Consumer thread
+        Output.println("Con thread started");
+        //Starting producer and Consumer threads
         prodThread1.start();
         prodThread2.start();
         prodThread3.start();
@@ -606,14 +625,7 @@ public class Main {
     public synchronized void pause() {
         exportLastTransactions();
         isStopped = true;
-        println("Threads are interrupted");
-    }
-
-    private void println(String text) {
-        System.out.println(
-                ZonedDateTime.now().format(DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT, FormatStyle.MEDIUM))
-                        + " " + text
-        );
+        Output.println("Threads are interrupted");
     }
 
     class Producer extends Thread {
@@ -631,7 +643,7 @@ public class Main {
         public void run() {
             try {
                 while (!isStopped) {
-                    println(name + ": checking addresses");
+                    Output.println(name + ": checking addresses");
                     for (String walletAddress : walletAddresses) {
                         JSONArray transactions = getTransactions(walletAddress);
                         if (transactions.length() == 0) {
@@ -643,28 +655,31 @@ public class Main {
                                 continue;
                             }
                             String transactionKey = (String) transaction.get("signature");
-                            println("Transaction " + transactionKey + " was added for " + walletAddress);
+                            Output.println("Transaction " + transactionKey + " was added for " + walletAddress);
                             transactionsQueue.put(transactionKey);
                         }
                         JSONObject lastTransaction = (JSONObject) transactions.get(0);
                         String lastTransactionKey = (String) lastTransaction.get("signature");
                         lastTransactions.put(walletAddress, lastTransactionKey);
                     }
-                    println(name + ": All " + walletAddresses.length + " addresses were checked. Sleeping for " + time + " seconds");
+                    Output.println(name + ": " + walletAddresses.length + " addresses were checked. Sleeping for " + time + " seconds");
                     try {
                         Thread.sleep(time * 1000L);
                     } catch (InterruptedException e) {
                         e.printStackTrace();
                         Thread.currentThread().interrupt();
+                        return;
                     }
                 }
             } catch (InterruptedException e) {
+                e.printStackTrace();
                 Thread.currentThread().interrupt();
             }
         }
     }
 
     private JSONArray getTransactions(String walletAddress) {
+        JSONObject jsonObj = null;
         try {
             String lastTransactionStr = lastTransactions.get(walletAddress);
             String JSON;
@@ -680,12 +695,17 @@ public class Main {
             CloseableHttpResponse response = client.execute(httpPost);
             HttpEntity entity = response.getEntity();
             String result = EntityUtils.toString(entity);
-            JSONObject jsonObj = new JSONObject(result);
+            jsonObj = new JSONObject(result);
+            response.close();
             return (JSONArray) jsonObj.get("result");
-        } catch (Exception e) {
+        } catch (JSONException | IOException | ClassCastException e) {
             e.printStackTrace();
-            return new JSONArray();
+            if (jsonObj != null) {
+                writeJSONToFile(walletAddress, jsonObj);
+                Output.println("JSON was written to file " + walletAddress + ".txt");
+            }
         }
+        return new JSONArray();
     }
 
     class Consumer extends Thread {
@@ -703,6 +723,7 @@ public class Main {
                     postJson(transactionSign);
                 }
             } catch (InterruptedException e) {
+                e.printStackTrace();
                 Thread.currentThread().interrupt();
             }
         }

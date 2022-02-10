@@ -1,9 +1,9 @@
 package operations;
 
 public class BidOperation extends Operation {
-    public String user;
-    public double amount;
-    public String marketplace;
+    public final String user;
+    public final double amount;
+    public final String marketplace;
 
     public BidOperation(String user, double amount, String marketplace) {
         this.user = user;
