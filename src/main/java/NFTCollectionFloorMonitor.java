@@ -11,14 +11,17 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.*;
 
-public class NFTCollectionFloorMonitor extends Thread {
+public class NFTCollectionFloorMonitor {
     private static CloseableHttpClient client;
     private List<FloorPriceChangeListener> listeners;
     private long sleepTime = 45_000;
-    private boolean isActive = false;
     private String floorCollectionsFilePath;
     private List<NFTCollection> collections;
+    private ScheduledThreadPoolExecutor scheduleExecutor;
+    private ScheduledFuture<?> scheduleManager;
+    private Runnable monitor;
 
     public NFTCollectionFloorMonitor(FloorPriceChangeListener listener, String filePath) {
         init();
@@ -74,21 +77,34 @@ public class NFTCollectionFloorMonitor extends Thread {
 
     public void setSleepTime(int time) {
         this.sleepTime = time * 1000L;
+        changePeriodTime();
+        Output.println("Waiting time was set to " + time + " s");
     }
 
     public int getSleepTime() {
         return (int) (sleepTime / 1000);
     }
 
+    private void changePeriodTime() {
+        if (scheduleManager != null) {
+            scheduleManager.cancel(false);
+        }
+        scheduleManager = scheduleExecutor.scheduleAtFixedRate(monitor, 0, sleepTime, TimeUnit.MILLISECONDS);
+    }
+
     public void startMonitor() {
-        this.start();
-        isActive = true;
+        monitor = () -> {
+            updatePrices();
+            Output.println("Sleeping for ~" + (sleepTime / 1000) + " s");
+        };
+        scheduleExecutor = new ScheduledThreadPoolExecutor(1);
+        scheduleManager = scheduleExecutor.scheduleAtFixedRate(monitor, 0, sleepTime, TimeUnit.MILLISECONDS);
     }
 
     public void stopMonitor() {
-        isActive = false;
         Output.println("Monitor is interrupted");
         exportFloorCollections();
+        scheduleExecutor.shutdown();
     }
 
     private void exportFloorCollections() {
@@ -100,19 +116,6 @@ public class NFTCollectionFloorMonitor extends Thread {
             bf.flush();
         } catch (IOException e) {
             e.printStackTrace();
-        }
-    }
-
-    @Override
-    public void run() {
-        while (isActive) {
-            updatePrices();
-            Output.println("Sleeping for " + (sleepTime / 1000) + " s");
-            try {
-                Thread.sleep(sleepTime);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
         }
     }
 
