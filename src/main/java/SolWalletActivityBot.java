@@ -8,7 +8,6 @@ import org.telegram.telegrambots.meta.api.objects.InputFile;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.updatesreceivers.DefaultBotSession;
-
 import java.io.*;
 import java.util.List;
 import java.util.Map;
@@ -53,11 +52,15 @@ public class SolWalletActivityBot extends TelegramLongPollingBot implements Wall
                 sendMessage(chatID, "Collections monitor started");
                 tracker.startThreads();
                 sendMessage(chatID, "Tracker started");
-            } else if (text.equalsIgnoreCase("/stop")) {
+            } else if (text.equalsIgnoreCase("/stop") || text.equalsIgnoreCase("/interrupt")) {
                 tracker.pause();
                 monitor.stopMonitor();
-                sendMessage(chatID, "Tracker stopped");
-            }  else if (text.matches("/time \\d+")) {
+                sendMessage(chatID, "Tracker & monitor stopped");
+            }  else if (text.equalsIgnoreCase("/restart")) {
+                tracker.restart();
+                monitor.restart();
+                sendMessage(chatID, "Tracker restarted");
+            } else if (text.matches("/time \\d+")) {
                 int time = Integer.parseInt(text.replaceAll("\\D+",""));
                 if (time > 0) {
                     tracker.setTime(time);
@@ -69,10 +72,15 @@ public class SolWalletActivityBot extends TelegramLongPollingBot implements Wall
                     monitor.setSleepTime(time);
                     sendMessage(chatID, "Monitor time set to " + time);
                 }
-            }else if (text.equalsIgnoreCase("/getTime")) {
+            } else if (text.equalsIgnoreCase("/getTime")) {
                 sendMessage(chatID,
                         "Tracker sleep time: " + tracker.getTime() + "\nMonitor sleep time: " + monitor.getSleepTime()
                 );
+            } else if (text.matches("/get[qQ]ueue[sS]ize") || text.matches("/get[qQ][sS]")) {
+                sendMessage(chatID, "Queue size: " + tracker.getQueueSize());
+            } else if (text.matches("get[tT]]hreads[cC]onditions") || text.matches("/get[tT][cC]")) {
+                sendMessage(chatID, tracker.getThreadsConditions());
+                sendMessage(chatID, monitor.getThreadCondition());
             } else if (text.equalsIgnoreCase("/wallets")) {
                 sendMessage(chatID, tracker.getWallets());
             } else if (text.equalsIgnoreCase("/get")) {

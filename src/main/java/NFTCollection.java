@@ -9,13 +9,15 @@ import java.util.List;
 
 public class NFTCollection {
     private String name;
-    private double floorPrice;
+    private double expectedFloorPrice;
+    private double actualFloorPrice;
     private double avgPrice24hr;
     private List<NFT> NFTs;
 
-    public NFTCollection(String name, double floorPrice, double avgPrice24hr) {
+    public NFTCollection(String name, double expectedFloorPrice, double actualFloorPrice, double avgPrice24hr) {
         this.name = name;
-        this.floorPrice = floorPrice;
+        this.actualFloorPrice = actualFloorPrice;
+        this.expectedFloorPrice = expectedFloorPrice;
         this.avgPrice24hr = avgPrice24hr;
         NFTs = new ArrayList<>();
     }
@@ -24,8 +26,12 @@ public class NFTCollection {
         return name;
     }
 
-    public double getFloorPrice() {
-        return floorPrice;
+    public double getActualFloorPrice() {
+        return actualFloorPrice;
+    }
+
+    public double getExpectedFloorPrice() {
+        return expectedFloorPrice;
     }
 
     public double getAvgPrice24hr() {
@@ -40,8 +46,12 @@ public class NFTCollection {
         this.name = name;
     }
 
-    public void setFloorPrice(double floorPrice) {
-        this.floorPrice = floorPrice;
+    public void setExpectedFloorPrice(double expectedFloorPrice) {
+        this.expectedFloorPrice = expectedFloorPrice;
+    }
+
+    public void setActualFloorPrice(double actualFloorPrice) {
+        this.actualFloorPrice = actualFloorPrice;
     }
 
     public void setAvgPrice24hr(double avgPrice24hr) {
@@ -103,6 +113,7 @@ public class NFTCollection {
         return (JSONObject) res.get("results");
     }
 
+    // call for 1 NFT's price
     public static double toDouble(Object price) {
         if (price instanceof BigDecimal) {
             return ((BigDecimal) price).doubleValue();
@@ -115,5 +126,15 @@ public class NFTCollection {
         }
         System.out.println(price.getClass());
         return 0.;
+    }
+
+    // call for NFT collection values: floorPrice, listedTotalValue, avgPrice24hr, volume24hr & volumeAll
+    public static double getCorrectedPrice(Object price) {
+        return toDouble(price) * 1E-9;
+    }
+
+    @Override
+    public String toString() {
+        return name + " " + expectedFloorPrice + " " + actualFloorPrice + " " + avgPrice24hr;
     }
 }

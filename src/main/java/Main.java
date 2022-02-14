@@ -13,30 +13,30 @@ import org.json.JSONObject;
 
 import java.io.*;
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
 import java.util.*;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.*;
 
 public class Main {
-    final int count = 0;
     HttpPost httpPost;
     CloseableHttpClient client;
     final WalletActivityListener listener;
     int time = 45;
-    boolean isStopped = true;
     private BlockingQueue<String> transactionsQueue;
     String[] walletAddresses;
     private String lastTransactionsFilePath;
+    private Map<String, String> wallets;
+    private Map<String, String> lastTransactions;
+    private List<String> unknownTransactionsList;
 
-    private final Map<String, String> wallets = new HashMap<>();
-    private final Map<String, String> lastTransactions = new HashMap<>();
+    private ExecutorService consExec;
+    private Future<?> conManager;
+    private ScheduledThreadPoolExecutor scheduleExecutor;
+    private List<ScheduledFuture<?>> scheduleManagers;
+    private List<Runnable> procs;
 
-    final String URLstr = "https://api.mainnet-beta.solana.com"; // "https://api.devnet.solana.com"
+    final String SOLANA_MAINNET_URL = "https://api.mainnet-beta.solana.com";
+    final String SOLANA_DEVNET_URL = "https://api.devnet.solana.com";
     final String solscanLink = """
                 <a href="https://solscan.io/tx/key">Solscan</a>""";
     final String getTransactionsJSONLimit = """
@@ -50,8 +50,7 @@ public class Main {
                             "limit": 1
                         }
                     ]
-                }
-            """;
+                }""";
     final String getTransactionsJSONLastTransaction = """
                 {
                     "jsonrpc": "2.0",
@@ -85,19 +84,25 @@ public class Main {
     }
 
     private void init() {
-        httpPost = new HttpPost(URLstr);
+        httpPost = new HttpPost(SOLANA_MAINNET_URL);
         httpPost.setHeader("Accept", "application/json");
         httpPost.setHeader("Content-type", "application/json");
         client = HttpClients.createDefault();
         transactionsQueue = new LinkedBlockingQueue<>();
+        wallets = new HashMap<>();
+        lastTransactions = new HashMap<>();
+        unknownTransactionsList = new ArrayList<>();
     }
 
+    /*
     public void trans(String... transactions) {
         for (String s : transactions) {
             postJson(s);
         }
     }
+     */
 
+    /*
     public void checkAllAccounts() {
         int i = 0;
         while (i < 100) {
@@ -115,6 +120,7 @@ public class Main {
         Output.println("End");
         Output.println("Number of unknown transactions: " + count);
     }
+     */
 
     public void checkAccounts(String... walletAddresses) {
         try {
@@ -162,37 +168,56 @@ public class Main {
                     lastTransactions.put(address, lastTransactionKey);
                 } catch (org.json.JSONException e) {
                     e.printStackTrace();
-                    JSONObject error = (JSONObject) jsonObj.get("error");
-                    int code = (Integer) error.get("code");
-                    String message = (String) error.get("message");
-                    Output.println("Error: " + code + ", Message: " + message);
-                    try {
-                        Thread.sleep(1500);
-                    } catch (InterruptedException ex) {
-                        ex.printStackTrace();
-                        Thread.currentThread().interrupt();
-                        return;
-                    }
+                    processError(jsonObj, address);
                 }
             }
             int size = transactionsMap.size();
-            if (size > 10) {
+            if (size > 0) {
                 Output.println("List of unique transactions was formed: " + transactionsMap.size());
-                transactionsMap
-                        .entrySet()
-                        .stream()
-                        .sorted(Map.Entry.comparingByValue())
-                        .forEachOrdered(x -> postJson(x.getKey()));
-                exportLastTransactions();
-            } else if (size > 0) {
-                transactionsMap.forEach((k, value) -> postJson(k));
-                exportLastTransactions();
+                if (size > 5) {
+                    transactionsMap
+                            .entrySet()
+                            .stream()
+                            .sorted(Map.Entry.comparingByValue())
+                            .forEachOrdered(x -> postJson(x.getKey()));
+                    exportLastTransactions();
+                } else {
+                    transactionsMap.forEach((k, value) -> postJson(k));
+                    exportLastTransactions();
+                }
             } else {
                 Output.println("No new transactions found");
             }
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    public int getQueueSize() {
+        return transactionsQueue.size();
+    }
+
+    public String getThreadsConditions() {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < scheduleManagers.size(); i++) {
+            ScheduledFuture<?> sf = scheduleManagers.get(i);
+            if (sf == null) {
+                text.append("Thread ").append(i).append(" is null\n");
+            } else if (sf.isCancelled()) {
+                text.append("Thread ").append(i).append(" is cancelled\n");
+            } else if (!sf.isCancelled()) {
+                text.append("Thread ").append(i).append(" is working\n");
+            }
+        }
+        if (conManager == null) {
+            text.append("Consumer thread is null\n");
+        } else if (conManager.isCancelled()) {
+            text.append("Consumer thread is cancelled\n");
+        } else if (!conManager.isCancelled()) {
+            text.append("Consumer thread is working\n");
+        }
+        Output.println(text.toString());
+        return text.toString();
     }
 
     public void parseTransaction(JSONObject transaction) throws org.json.JSONException {
@@ -237,11 +262,22 @@ public class Main {
         if (!(operation == null)) {
             Output.println(formattedDate + " Message: " + addNameToWallet(getOp(operation)));
             listener.print(formattedDate + "\n" + formatMessage(operation) + "\n" + link);
+        } else {
+            unknownTransactionsList.add(transactionStr);
+            Output.println(formattedDate + "Unknown operation: " + transactionStr);
         }
     }
 
     public void setTime(int time) {
         this.time = time;
+        for (int i = 0; i < scheduleManagers.size(); i++) {
+            ScheduledFuture<?> sf = scheduleManagers.get(i);
+            if (sf != null) {
+                sf.cancel(false);
+            }
+            sf = scheduleExecutor.scheduleAtFixedRate(procs.get(i), 0, time, TimeUnit.SECONDS);
+            scheduleManagers.set(i, sf);
+        }
         Output.println("Time was set to " + time);
     }
 
@@ -343,9 +379,9 @@ public class Main {
         return text;
     }
 
-    // https://www.baeldung.com/httpclient-post-http-request
     public void postJson(String key) {
         try {
+            Output.println("Parsing " + key);
             String JSON = JSONbody.replace("key", key);
             StringEntity stringEntity = new StringEntity(JSON);
             httpPost.setEntity(stringEntity);
@@ -353,24 +389,12 @@ public class Main {
             HttpEntity entity = response.getEntity();
             String result = EntityUtils.toString(entity);
             JSONObject jsonObj = new JSONObject(result);
-            //writeJSONToFile(".\\data\\transactions\\" + key, jsonObj);
-            Output.println("Parsing " + key);
             try {
                 parseTransaction(jsonObj);
             } catch (org.json.JSONException e) {
                 e.printStackTrace();
-                JSONObject error = (JSONObject) jsonObj.get("error");
-                int code = (Integer) error.get("code");
-                String message = (String) error.get("message");
-                System.out.println("Error: " + code + ", Message: " + message);
-                try {
-                    Thread.sleep(1500);
-                } catch (InterruptedException ex) {
-                    ex.printStackTrace();
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-                postJson(key);
+                processError(jsonObj, key);
+                postJson(key); // TODO check later
             }
             response.close();
         } catch (Exception e) {
@@ -481,16 +505,6 @@ public class Main {
         return max * 1E-9;
     }
 
-    public void writeJSONToFile(String transaction, JSONObject jsonObj) {
-        String JSONBody = jsonObj.toString(2);
-        Path file = Paths.get(transaction + ".txt");
-        try {
-            Files.write(file, Collections.singleton(JSONBody), StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
     public void loadAccounts(String file) {
         try (BufferedReader br = new BufferedReader(new FileReader(file))) {
             String line;
@@ -535,9 +549,20 @@ public class Main {
     public void exportLastTransactions() {
         try (BufferedWriter bf = new BufferedWriter(new FileWriter(lastTransactionsFilePath))) {
             for (Map.Entry<String, String> entry : lastTransactions.entrySet()) {
-                // put key and value separated by a colon
                 bf.write(entry.getKey() + ":" + entry.getValue());
-                // new line
+                bf.newLine();
+            }
+            bf.flush();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void exportUnknownTransactions() {
+        String unknownTransactionsFilePath = ".\\data\\unknownTransactions.txt";
+        try (BufferedWriter bf = new BufferedWriter(new FileWriter(unknownTransactionsFilePath, true))) {
+            for (String s : unknownTransactionsList) {
+                bf.write(s);
                 bf.newLine();
             }
             bf.flush();
@@ -587,26 +612,17 @@ public class Main {
         return price;
     }
 
+    public void restart() {
+        pause();
+        startThreads();
+    }
+
     public void startThreads() {
         Output.println("First run");
         checkAccounts(walletAddresses);
         Output.println("First run ended");
-        String[][] wallets = chuck(walletAddresses, 9);
-        System.out.println(Arrays.deepToString(wallets));
-        Thread prodThread1 = new Thread(new Producer(transactionsQueue, wallets[0], "Thread 1"));
-        Thread prodThread2 = new Thread(new Producer(transactionsQueue, wallets[1], "Thread 2"));
-        Thread prodThread3 = new Thread(new Producer(transactionsQueue, wallets[2],"Thread 3"));
-        Thread prodThread4 = new Thread(new Producer(transactionsQueue, wallets[3],"Thread 4"));
-        Output.println("Prod threads started");
-        Thread consThread = new Thread(new Consumer(transactionsQueue));
-        Output.println("Con thread started");
-        //Starting producer and Consumer threads
-        prodThread1.start();
-        prodThread2.start();
-        prodThread3.start();
-        prodThread4.start();
-        consThread.start();
-        isStopped = false;
+        startProducersThreads();
+        startConsumerThread();
     }
 
     public String[][] chuck(String[] array, int chunkSize) {
@@ -622,13 +638,62 @@ public class Main {
         return output;
     }
 
-    public synchronized void pause() {
-        exportLastTransactions();
-        isStopped = true;
-        Output.println("Threads are interrupted");
+    private void startProducersThreads() {
+        String[][] wallets = chuck(walletAddresses, 9);
+        Output.println(Arrays.deepToString(wallets));
+        // Producers
+        scheduleExecutor = new ScheduledThreadPoolExecutor(wallets.length);
+        scheduleManagers = new ArrayList<>();
+        procs = new ArrayList<>();
+        for (int i = 0; i < wallets.length; i++) {
+            Runnable proc = new Producer(transactionsQueue, wallets[i], "Thread " + i);
+            procs.add(proc);
+            scheduleManagers.add(scheduleExecutor.scheduleAtFixedRate(proc, 0, time, TimeUnit.SECONDS));
+        }
+        Output.println("Prod threads started");
     }
 
-    class Producer extends Thread {
+    private void startConsumerThread() {
+        Runnable consThread = new Consumer(transactionsQueue);
+        consExec = Executors.newSingleThreadExecutor();
+        conManager = consExec.submit(consThread);
+        Output.println("Con thread started");
+    }
+
+    public void pause() {
+        exportLastTransactions();
+        exportUnknownTransactions();
+        cancelProducerThreads();
+        cancelConsumerThread();
+    }
+
+    private void cancelProducerThreads() {
+        for (int i = 0; i < scheduleManagers.size(); i++) {
+            ScheduledFuture<?> sf = scheduleManagers.get(i);
+            if (sf.isCancelled()) {
+                Output.println("Thread " + i + " is already interrupted");
+                continue;
+            }
+            sf.cancel(false);
+            if (sf.isCancelled()) {
+                Output.println("Thread " + i + " is interrupted");
+            }
+        }
+        scheduleExecutor.shutdown();
+        Output.println("Prod threads are interrupted");
+    }
+
+    private void cancelConsumerThread() {
+        if (conManager.isCancelled()) {
+            Output.println("Con thread is already interrupted");
+        }
+        conManager.cancel(false);
+        if (conManager.isCancelled()) {
+            Output.println("Con thread is interrupted");
+        }
+    }
+
+    class Producer implements Runnable {
         private final BlockingQueue<String> transactionsQueue;
         private final String[] walletAddresses;
         private final String name;
@@ -641,40 +706,31 @@ public class Main {
 
         @Override
         public void run() {
-            try {
-                while (!isStopped) {
-                    Output.println(name + ": checking addresses");
-                    for (String walletAddress : walletAddresses) {
-                        JSONArray transactions = getTransactions(walletAddress);
-                        if (transactions.length() == 0) {
-                            continue;
-                        }
-                        for (int i = transactions.length() - 1; i >= 0; i--) {
-                            JSONObject transaction = (JSONObject) transactions.get(i);
-                            if (!transaction.get("err").toString().equals("null")) {
-                                continue;
-                            }
-                            String transactionKey = (String) transaction.get("signature");
-                            Output.println("Transaction " + transactionKey + " was added for " + walletAddress);
-                            transactionsQueue.put(transactionKey);
-                        }
-                        JSONObject lastTransaction = (JSONObject) transactions.get(0);
-                        String lastTransactionKey = (String) lastTransaction.get("signature");
-                        lastTransactions.put(walletAddress, lastTransactionKey);
+            Output.println(name + ": checking addresses");
+            for (String walletAddress : walletAddresses) {
+                //Output.println("Address: " + walletAddress);
+                JSONArray transactions = getTransactions(walletAddress);
+                if (transactions.length() == 0) {
+                    continue;
+                }
+                for (int i = transactions.length() - 1; i >= 0; i--) {
+                    JSONObject transaction = (JSONObject) transactions.get(i);
+                    if (!transaction.get("err").toString().equals("null")) {
+                        continue;
                     }
-                    Output.println(name + ": " + walletAddresses.length + " addresses were checked. Sleeping for " + time + " seconds");
+                    String transactionKey = (String) transaction.get("signature");
                     try {
-                        Thread.sleep(time * 1000L);
+                        transactionsQueue.put(transactionKey);
+                        Output.println("Transaction " + transactionKey + " was added for " + walletAddress);
                     } catch (InterruptedException e) {
                         e.printStackTrace();
-                        Thread.currentThread().interrupt();
-                        return;
                     }
                 }
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-                Thread.currentThread().interrupt();
+                JSONObject lastTransaction = (JSONObject) transactions.get(0);
+                String lastTransactionKey = (String) lastTransaction.get("signature");
+                lastTransactions.put(walletAddress, lastTransactionKey);
             }
+            Output.println(name + ": " + walletAddresses.length + " addresses were checked. Sleeping for " + time + " seconds");
         }
     }
 
@@ -700,15 +756,31 @@ public class Main {
             return (JSONArray) jsonObj.get("result");
         } catch (JSONException | IOException | ClassCastException e) {
             e.printStackTrace();
-            if (jsonObj != null) {
-                writeJSONToFile(walletAddress, jsonObj);
-                Output.println("JSON was written to file " + walletAddress + ".txt");
-            }
+            processError(jsonObj, walletAddress);
         }
         return new JSONArray();
     }
 
-    class Consumer extends Thread {
+    private void processError(JSONObject jo, String key) {
+        if (jo != null) {
+            Error error = new Error(jo);
+            Output.println(error.toString());
+            if (error.getCode() == 429) {
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException ex) {
+                    ex.printStackTrace();
+                }
+            } else {
+                Output.writeJSONToFile(".\\data\\failed\\" + key, jo);
+                Output.println("JSON was written to file " + key + ".txt");
+            }
+        } else {
+            Output.println("JSONObject is null");
+        }
+    }
+
+    class Consumer implements Runnable {
         private final BlockingQueue<String> transactionsQueue;
 
         public Consumer(BlockingQueue<String> transactionsQueue) {
@@ -717,14 +789,14 @@ public class Main {
 
         @Override
         public void run() {
-            try {
-                while (!isStopped) {
+            while (!conManager.isCancelled()) {
+                try {
                     String transactionSign = transactionsQueue.take();
                     postJson(transactionSign);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                    Thread.currentThread().interrupt();
                 }
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-                Thread.currentThread().interrupt();
             }
         }
     }

@@ -34,7 +34,7 @@ public class NFT {
     }
 
     public double getCollectionFloorPrice() {
-        return collection.getFloorPrice();
+        return collection.getActualFloorPrice();
     }
 
     public double getCollectionAvgPrice24hr() {
