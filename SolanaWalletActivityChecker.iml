@@ -7,6 +7,10 @@
       <sourceFolder url="file://$MODULE_DIR$/src/main/java" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/src/main/resources" type="java-resource" />
       <sourceFolder url="file://$MODULE_DIR$/src/test/java" isTestSource="true" />
+      <excludeFolder url="file://$MODULE_DIR$/data" />
+      <excludeFolder url="file://$MODULE_DIR$/.idea" />
+      <excludeFolder url="file://$MODULE_DIR$/app" />
+      <excludeFolder url="file://$MODULE_DIR$/heroku" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />
@@ -60,6 +64,8 @@
     <orderEntry type="library" name="Maven: commons-io:commons-io:2.8.0" level="project" />
     <orderEntry type="library" name="Maven: org.slf4j:slf4j-api:1.7.30" level="project" />
     <orderEntry type="library" name="Maven: org.openapitools:openapi-generator-cli:5.4.0" level="project" />
-    <orderEntry type="library" name="Maven: org.jetbrains:annotations:23.0.0" level="project" />
+    <orderEntry type="library" name="Maven: com.squareup.okhttp3:okhttp:3.12.1" level="project" />
+    <orderEntry type="library" name="Maven: com.squareup.okio:okio:1.15.0" level="project" />
+    <orderEntry type="library" name="Maven: com.alibaba:fastjson:1.2.47" level="project" />
   </component>
 </module>

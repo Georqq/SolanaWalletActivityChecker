@@ -1,3 +1,4 @@
+import com.binance.client.model.trade.Order;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.TelegramBotsApi;
 import org.telegram.telegrambots.meta.api.methods.GetFile;
@@ -19,6 +20,7 @@ public class SolWalletActivityBot extends TelegramLongPollingBot implements Wall
     private final String chatID = "136412831";
     private final Main tracker;
     private final NFTCollectionFloorMonitor monitor;
+    private final BinanceTradeBot binanceTradeBot;
 
     public static void main(String[] args)  {
         try {
@@ -35,6 +37,7 @@ public class SolWalletActivityBot extends TelegramLongPollingBot implements Wall
         loadBotDataFromFile();
         tracker = new Main(this);
         monitor = new NFTCollectionFloorMonitor(this, "./data/136412831_collections.txt");
+        binanceTradeBot = new BinanceTradeBot(this);
     }
 
     @Override
@@ -88,6 +91,14 @@ public class SolWalletActivityBot extends TelegramLongPollingBot implements Wall
                 sendDocument(chatID, "lastTransactions.txt");
                 sendDocument(chatID, "collections.txt");
                 sendMessage(chatID, "Documents were sent");
+            } else if (text.contains("The signal only for futures trading") && text.contains("Price:") && text.contains("SL: ≈") && text.contains("TP №1: ≈")) {
+                binanceTradeBot.sendMessage(text);
+            } else if (text.contains("/getmop") || text.contains("/get[mM]ax[oO]rder[pP]rice")) {
+                sendMessage(chatID, "Max order price: " + binanceTradeBot.getMaxOrderPrice());
+            } else if (text.contains("/setmop \\d+") || text.contains("/set[mM]ax[oO]rder[pP]rice \\d+")) {
+                double price = Double.parseDouble(text.split(" ")[1]);
+                binanceTradeBot.setMaxOrderPrice(price);
+                sendMessage(chatID, "Max order price: " + binanceTradeBot.getMaxOrderPrice());
             } else {
                 sendMessage(chatID, text);
             }
@@ -197,5 +208,9 @@ public class SolWalletActivityBot extends TelegramLongPollingBot implements Wall
                 .replace("flp", Output.df.format(data.getCollectionFloorPrice()))
                 .replace("avpr", Output.df.format(data.getCollectionAvgPrice24hr()));
         sendMessage(chatID, text);
+    }
+
+    public void sendMsg(Order order) {
+        sendMessage(chatID, order.toString());
     }
 }

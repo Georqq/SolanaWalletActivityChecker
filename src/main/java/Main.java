@@ -264,7 +264,7 @@ public class Main {
             listener.print(formattedDate + "\n" + formatMessage(operation) + "\n" + link);
         } else {
             unknownTransactionsList.add(transactionStr);
-            Output.println(formattedDate + "Unknown operation: " + transactionStr);
+            Output.println(formattedDate + " Unknown operation: " + transactionStr);
         }
     }
 

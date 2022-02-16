@@ -18,8 +18,8 @@ public class Output {
 
     public static void println(String text) {
         System.out.println(
-                ZonedDateTime.now().format(DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT, FormatStyle.MEDIUM))
-                        + " " + text
+                '[' + ZonedDateTime.now().format(DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT, FormatStyle.MEDIUM))
+                        + "] " + text
         );
     }
 
