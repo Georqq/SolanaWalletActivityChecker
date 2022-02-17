@@ -95,7 +95,7 @@ public class SolWalletActivityBot extends TelegramLongPollingBot implements Wall
                 binanceTradeBot.sendMessage(text);
             } else if (text.contains("/getmop") || text.contains("/get[mM]ax[oO]rder[pP]rice")) {
                 sendMessage(chatID, "Max order price: " + binanceTradeBot.getMaxOrderPrice());
-            } else if (text.contains("/setmop \\d+") || text.contains("/set[mM]ax[oO]rder[pP]rice \\d+")) {
+            } else if (text.matches("/setmop \\d+") || text.matches("/set[mM]ax[oO]rder[pP]rice \\d+")) {
                 double price = Double.parseDouble(text.split(" ")[1]);
                 binanceTradeBot.setMaxOrderPrice(price);
                 sendMessage(chatID, "Max order price: " + binanceTradeBot.getMaxOrderPrice());

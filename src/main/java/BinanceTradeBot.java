@@ -17,12 +17,12 @@ import java.util.regex.Pattern;
 
 public class BinanceTradeBot {
     private SyncRequestClient syncRequestClient;
-    String pricePatternStr = "Price: (\\d+\\.\\d+)";
-    String SLPatternStr = "⛔️ SL: ≈(\\d+\\.\\d+)";
-    String TP1PatternStr = "\uD83C\uDFAF TP №1: ≈(\\d+\\.\\d+)";
-    String currencyPatternStr = "Currency: (\\S*) ";
-    String typePatternStr = "#FUTURE \uD83D\uDD25\uD83D\uDD25\uD83D\uDD25 [(\uD83D\uDFE2)(\uD83D\uDD34)] #(\\S*) [(\uD83D\uDFE2)(\uD83D\uDD34)] The signal only for futures trading.";
-    String isAveragingPatternStr = "AVERAGING THE ENTRY POINT";
+    final String pricePatternStr = "Price: (\\d+\\.\\d+)";
+    final String SLPatternStr = "⛔️ SL: ≈(\\d+\\.\\d+)";
+    final String TP1PatternStr = "\uD83C\uDFAF TP №1: ≈(\\d+\\.\\d+)";
+    final String currencyPatternStr = "Currency: (\\S*) ";
+    final String typePatternStr = "#FUTURE \uD83D\uDD25\uD83D\uDD25\uD83D\uDD25 [(\uD83D\uDFE2)(\uD83D\uDD34)] #(\\S*) [(\uD83D\uDFE2)(\uD83D\uDD34)] The signal only for futures trading.";
+    final String isAveragingPatternStr = "AVERAGING THE ENTRY POINT";
     private double maxOrderPrice = 1.0; // in USDT
     private SolWalletActivityBot listener;
     private String k1;
@@ -45,6 +45,7 @@ public class BinanceTradeBot {
     public void setMaxOrderPrice(double price) {
         if (price >= 0.1 && price <= 20.0) {
             maxOrderPrice = price;
+            Output.println("Max order price was set to " + maxOrderPrice);
         } else {
             Output.println("Error: price " + price + " is too big");
         }

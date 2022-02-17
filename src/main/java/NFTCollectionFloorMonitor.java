@@ -64,19 +64,6 @@ public class NFTCollectionFloorMonitor {
         }
     }
 
-    /*
-    private void fillC(Map<String, Double> collectionsFloorPrices) {
-        for (Map.Entry<String, Double> entry : collectionsFloorPrices.entrySet()) {
-            String name = entry.getKey();
-            double floorPrice = entry.getValue();
-            double avgSalePrice24hr = -1.;
-            NFTCollection collection = new NFTCollection(name, floorPrice, avgSalePrice24hr);
-            collections.add(collection);
-        }
-    }
-
-     */
-
     public void addListener(FloorPriceChangeListener listener) {
         listeners.add(listener);
     }
@@ -84,7 +71,7 @@ public class NFTCollectionFloorMonitor {
     public void setSleepTime(int time) {
         this.sleepTime = time * 1000L;
         changePeriodTime();
-        Output.println("Waiting time was set to " + time + " s");
+        println("Waiting time was set to " + time + " s");
     }
 
     public int getSleepTime() {
@@ -108,7 +95,7 @@ public class NFTCollectionFloorMonitor {
     public void startMonitor() {
         monitor = () -> {
             updatePrices();
-            Output.println("Sleeping for ~" + (sleepTime / 1000) + " s");
+            println("Sleeping for ~" + (sleepTime / 1000) + " s");
         };
         scheduleExecutor = new ScheduledThreadPoolExecutor(1);
         scheduleManager = scheduleExecutor.scheduleAtFixedRate(monitor, 0, sleepTime, TimeUnit.MILLISECONDS);
@@ -120,16 +107,17 @@ public class NFTCollectionFloorMonitor {
             scheduleManager.cancel(false);
             scheduleExecutor.shutdown();
             if (scheduleManager.isCancelled()) {
-                Output.println("Monitor is interrupted");
+                println("Monitor is interrupted");
             }
         } else {
-            Output.println("Monitor is already interrupted");
+            println("Monitor is already interrupted");
         }
     }
 
     private void exportFloorCollections() {
         try (BufferedWriter bf = new BufferedWriter(new FileWriter(floorCollectionsFilePath))) {
             bf.write("; collectionName expectedFloorPrice ActualFloorPrice AvgSalePrice24hr");
+            bf.newLine();
             for (NFTCollection col : collections) {
                 bf.write(col.toString());
                 bf.newLine();
@@ -141,7 +129,7 @@ public class NFTCollectionFloorMonitor {
     }
 
     public void updatePrices() {
-        Output.println("Updating floor and avg prices for " + collections.size() + " collections");
+        println("Updating floor and avg prices for " + collections.size() + " collections");
         for (NFTCollection col : collections) {
             String collectionName = col.getName();
             try {
@@ -150,22 +138,22 @@ public class NFTCollectionFloorMonitor {
                 double avgSalePrice24hr = getNFTCollectionAvgPrice(results);
                 double expectedFloorPrice = col.getExpectedFloorPrice();
                 if (actualFloorPrice < expectedFloorPrice && actualFloorPrice > 0.001) {
-                    Output.println(collectionName + ": current floor value is " + actualFloorPrice + ", previous floor is " + expectedFloorPrice);
+                    println(collectionName + ": current floor value is " + actualFloorPrice + ", previous floor is " + expectedFloorPrice);
                     List<NFT> NFTs = col.findNFTs(expectedFloorPrice, 20);
-                    Output.println(collectionName + ": " + NFTs.size() + " NFTs were found");
+                    println(collectionName + ": " + NFTs.size() + " NFTs were found");
                     for (FloorPriceChangeListener listener : listeners) {
                         for (NFT nftData : NFTs) {
                             listener.send(nftData);
-                            Output.println(nftData.toString());
+                            println(nftData.toString());
                         }
                     }
                     col.setExpectedFloorPrice(actualFloorPrice);
-                    Output.println("Expected floor price was changed for collection " + collectionName + " from " + expectedFloorPrice + " to " + actualFloorPrice);
+                    println("Expected floor price was changed for collection " + collectionName + " from " + expectedFloorPrice + " to " + actualFloorPrice);
                 }
                 col.setActualFloorPrice(actualFloorPrice);
                 col.setAvgPrice24hr(avgSalePrice24hr);
             } catch (JSONException e) {
-                Output.println("caught");
+                println("caught");
                 e.printStackTrace();
             }
         }
@@ -197,7 +185,7 @@ public class NFTCollectionFloorMonitor {
         } catch (JSONException | IOException e) {
             e.printStackTrace();
             Output.writeToFile("E:\\Projects\\SolanaWalletActivityChecker\\heroku\\data\\failed\\entity.txt", result);
-            Output.println("Error, response was written to file");
+            println("Error, response was written to file");
         }
         return new JSONObject();
     }
@@ -211,7 +199,11 @@ public class NFTCollectionFloorMonitor {
         } else if (!scheduleManager.isCancelled()) {
             text.append("Monitor thread is working\n");
         }
-        Output.println(text.toString());
+        println(text.toString());
         return text.toString();
+    }
+
+    private static void println(String text) {
+        Output.println("[MONITOR] " + text);
     }
 }

@@ -29,7 +29,6 @@ public class Main {
     private Map<String, String> lastTransactions;
     private List<String> unknownTransactionsList;
 
-    private ExecutorService consExec;
     private Future<?> conManager;
     private ScheduledThreadPoolExecutor scheduleExecutor;
     private List<ScheduledFuture<?>> scheduleManagers;
@@ -90,106 +89,58 @@ public class Main {
         client = HttpClients.createDefault();
         transactionsQueue = new LinkedBlockingQueue<>();
         wallets = new HashMap<>();
-        lastTransactions = new HashMap<>();
+        lastTransactions = new ConcurrentHashMap<>();
         unknownTransactionsList = new ArrayList<>();
     }
 
-    /*
-    public void trans(String... transactions) {
-        for (String s : transactions) {
-            postJson(s);
-        }
-    }
-     */
-
-    /*
-    public void checkAllAccounts() {
-        int i = 0;
-        while (i < 100) {
-            Output.println(String.valueOf(i++));
-            checkAccounts(walletAddresses);
-            try {
-                Output.println("Waiting for " + time * 1000L + " seconds");
-                Thread.sleep(time * 1000L);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-                Thread.currentThread().interrupt();
-                return;
-            }
-        }
-        Output.println("End");
-        Output.println("Number of unknown transactions: " + count);
-    }
-     */
-
     public void checkAccounts(String... walletAddresses) {
-        try {
-            Output.println("Checking " + walletAddresses.length + " addresses");
-            Map<String, Integer> transactionsMap = new TreeMap<>();
-            for (String address : walletAddresses) {
-                String lastTransactionStr = lastTransactions.get(address);
-                String JSON;
-                if (lastTransactionStr == null) {
-                    JSON = getTransactionsJSONLimit.replace("key", address);
-                } else {
-                    JSON = getTransactionsJSONLastTransaction
-                            .replace("key", address)
-                            .replace("lastTransaction", lastTransactionStr);
+        println("Checking " + walletAddresses.length + " addresses");
+        Map<String, Integer> transactionsMap = new TreeMap<>();
+        for (String address : walletAddresses) {
+            try {
+                JSONArray transactions = getTransactions(address);
+                if (transactions.isEmpty()) {
+                    continue;
                 }
-                StringEntity stringEntity = new StringEntity(JSON);
-                httpPost.setEntity(stringEntity);
-                CloseableHttpResponse response = client.execute(httpPost);
-                HttpEntity entity = response.getEntity();
-                String result = EntityUtils.toString(entity);
-                JSONObject jsonObj = new JSONObject(result);
-                try {
-                    JSONArray transactions = (JSONArray) jsonObj.get("result");
-                    if (transactions.length() == 0) {
+                int addedTransactionsCount = 0;
+                for (int i = transactions.length() - 1; i >= 0; i--) {
+                    JSONObject transaction = (JSONObject) transactions.get(i);
+                    if (!transaction.get("err").toString().equals("null")) {
                         continue;
                     }
-                    int addedTransactionsCount = 0;
-                    for (int i = transactions.length() - 1; i >= 0; i--) {
-                        JSONObject transaction = (JSONObject) transactions.get(i);
-                        if (!transaction.get("err").toString().equals("null")) {
-                            continue;
-                        }
-                        int blockTime = (int) transaction.get("blockTime");
-                        String transactionKey = (String) transaction.get("signature");
-                        transactionsMap.put(transactionKey, blockTime);
-                        addedTransactionsCount++;
-                    }
-                    if (addedTransactionsCount == 1) {
-                        Output.println("1 transaction was successfully added for " + address);
-                    } else {
-                        Output.println(addedTransactionsCount + " transactions were successfully added for " + address);
-                    }
-                    JSONObject lastTransaction = (JSONObject) transactions.get(0);
-                    String lastTransactionKey = (String) lastTransaction.get("signature");
-                    lastTransactions.put(address, lastTransactionKey);
-                } catch (org.json.JSONException e) {
-                    e.printStackTrace();
-                    processError(jsonObj, address);
+                    int blockTime = (int) transaction.get("blockTime");
+                    String transactionKey = (String) transaction.get("signature");
+                    transactionsMap.put(transactionKey, blockTime);
+                    addedTransactionsCount++;
                 }
-            }
-            int size = transactionsMap.size();
-            if (size > 0) {
-                Output.println("List of unique transactions was formed: " + transactionsMap.size());
-                if (size > 5) {
-                    transactionsMap
-                            .entrySet()
-                            .stream()
-                            .sorted(Map.Entry.comparingByValue())
-                            .forEachOrdered(x -> postJson(x.getKey()));
-                    exportLastTransactions();
+                if (addedTransactionsCount == 1) {
+                    println("1 transaction was successfully added for " + address);
                 } else {
-                    transactionsMap.forEach((k, value) -> postJson(k));
-                    exportLastTransactions();
+                    println(addedTransactionsCount + " transactions were successfully added for " + address);
                 }
-            } else {
-                Output.println("No new transactions found");
+                JSONObject lastTransaction = (JSONObject) transactions.get(0);
+                String lastTransactionKey = (String) lastTransaction.get("signature");
+                lastTransactions.put(address, lastTransactionKey);
+            } catch (JSONException e) {
+                e.printStackTrace();
             }
-        } catch (IOException e) {
-            e.printStackTrace();
+        }
+        int size = transactionsMap.size();
+        if (size > 0) {
+            println("List of unique transactions was formed: " + transactionsMap.size());
+            if (size > 5) {
+                transactionsMap
+                        .entrySet()
+                        .stream()
+                        .sorted(Map.Entry.comparingByValue())
+                        .forEachOrdered(x -> postJson(x.getKey()));
+                exportLastTransactions();
+            } else {
+                transactionsMap.forEach((k, value) -> postJson(k));
+                exportLastTransactions();
+            }
+        } else {
+            println("No new transactions found");
         }
     }
 
@@ -216,7 +167,7 @@ public class Main {
         } else if (!conManager.isCancelled()) {
             text.append("Consumer thread is working\n");
         }
-        Output.println(text.toString());
+        println(text.toString());
         return text.toString();
     }
 
@@ -250,7 +201,7 @@ public class Main {
                 }
             }
         } else if (firstLine.equals("Program DeJBGdMFa1uynnnKiwrVioatTuHmNLpyFKnmB5kaFdzQ invoke [1]")) {
-            System.out.println("NFT or token transfer");
+            //System.out.println("NFT or token transfer");
             operation  = parseNFTtransfer(transaction);
         } else if (firstLine.equals("Program CJsLwbP1iu5DuUikHEJnLfANgKy6stB2uFgvBBHoyxwz invoke [1]")) {
             operation = parseSale(transaction);
@@ -260,11 +211,11 @@ public class Main {
         }
         String link = solscanLink.replace("key", transactionStr);
         if (!(operation == null)) {
-            Output.println(formattedDate + " Message: " + addNameToWallet(getOp(operation)));
+            println("Message: " + formattedDate+ addNameToWallet(getOp(operation)));
             listener.print(formattedDate + "\n" + formatMessage(operation) + "\n" + link);
         } else {
             unknownTransactionsList.add(transactionStr);
-            Output.println(formattedDate + " Unknown operation: " + transactionStr);
+            println(formattedDate + " Unknown operation: " + transactionStr);
         }
     }
 
@@ -278,7 +229,7 @@ public class Main {
             sf = scheduleExecutor.scheduleAtFixedRate(procs.get(i), 0, time, TimeUnit.SECONDS);
             scheduleManagers.set(i, sf);
         }
-        Output.println("Time was set to " + time);
+        println("Time was set to " + time);
     }
 
     public int getTime() {
@@ -381,7 +332,7 @@ public class Main {
 
     public void postJson(String key) {
         try {
-            Output.println("Parsing " + key);
+            println("Parsing " + key);
             String JSON = JSONbody.replace("key", key);
             StringEntity stringEntity = new StringEntity(JSON);
             httpPost.setEntity(stringEntity);
@@ -583,7 +534,7 @@ public class Main {
             JSONObject res = new JSONObject(result);
             JSONObject results = (JSONObject) res.get("results");
             name = (String) results.get("title");
-        } catch (Exception e) {
+        } catch (IOException | JSONException e) {
             e.printStackTrace();
         }
         return name;
@@ -618,9 +569,9 @@ public class Main {
     }
 
     public void startThreads() {
-        Output.println("First run");
+        println("First run");
         checkAccounts(walletAddresses);
-        Output.println("First run ended");
+        println("First run ended");
         startProducersThreads();
         startConsumerThread();
     }
@@ -640,24 +591,25 @@ public class Main {
 
     private void startProducersThreads() {
         String[][] wallets = chuck(walletAddresses, 9);
-        Output.println(Arrays.deepToString(wallets));
+        //println(Arrays.deepToString(wallets));
         // Producers
         scheduleExecutor = new ScheduledThreadPoolExecutor(wallets.length);
         scheduleManagers = new ArrayList<>();
         procs = new ArrayList<>();
         for (int i = 0; i < wallets.length; i++) {
+            println("[Thread " + i + "] wallets: " + Arrays.toString(wallets[i]));
             Runnable proc = new Producer(transactionsQueue, wallets[i], "Thread " + i);
             procs.add(proc);
             scheduleManagers.add(scheduleExecutor.scheduleAtFixedRate(proc, 0, time, TimeUnit.SECONDS));
         }
-        Output.println("Prod threads started");
+        println(scheduleManagers.size() + " prod threads started");
     }
 
     private void startConsumerThread() {
         Runnable consThread = new Consumer(transactionsQueue);
-        consExec = Executors.newSingleThreadExecutor();
+        ExecutorService consExec = Executors.newSingleThreadExecutor();
         conManager = consExec.submit(consThread);
-        Output.println("Con thread started");
+        println("Con thread started");
     }
 
     public void pause() {
@@ -671,25 +623,25 @@ public class Main {
         for (int i = 0; i < scheduleManagers.size(); i++) {
             ScheduledFuture<?> sf = scheduleManagers.get(i);
             if (sf.isCancelled()) {
-                Output.println("Thread " + i + " is already interrupted");
+                println("Thread " + i + " is already interrupted");
                 continue;
             }
             sf.cancel(false);
             if (sf.isCancelled()) {
-                Output.println("Thread " + i + " is interrupted");
+                println("Thread " + i + " is interrupted");
             }
         }
         scheduleExecutor.shutdown();
-        Output.println("Prod threads are interrupted");
+        println("Prod threads are interrupted");
     }
 
     private void cancelConsumerThread() {
         if (conManager.isCancelled()) {
-            Output.println("Con thread is already interrupted");
+            println("Con thread is already interrupted");
         }
         conManager.cancel(false);
         if (conManager.isCancelled()) {
-            Output.println("Con thread is interrupted");
+            println("Con thread is interrupted");
         }
     }
 
@@ -706,9 +658,8 @@ public class Main {
 
         @Override
         public void run() {
-            Output.println(name + ": checking addresses");
+            println('[' + name + "] checking addresses");
             for (String walletAddress : walletAddresses) {
-                //Output.println("Address: " + walletAddress);
                 JSONArray transactions = getTransactions(walletAddress);
                 if (transactions.length() == 0) {
                     continue;
@@ -721,16 +672,18 @@ public class Main {
                     String transactionKey = (String) transaction.get("signature");
                     try {
                         transactionsQueue.put(transactionKey);
-                        Output.println("Transaction " + transactionKey + " was added for " + walletAddress);
+                        println('[' + name + "] transaction " + transactionKey + " was added for " + walletAddress);
                     } catch (InterruptedException e) {
                         e.printStackTrace();
                     }
                 }
                 JSONObject lastTransaction = (JSONObject) transactions.get(0);
                 String lastTransactionKey = (String) lastTransaction.get("signature");
+                String prevTransaction = lastTransactions.get(walletAddress);
                 lastTransactions.put(walletAddress, lastTransactionKey);
+                println('[' + name + "] wallet " + walletAddress + ": last transaction " + prevTransaction + " was replaced by " + lastTransactionKey);
             }
-            Output.println(name + ": " + walletAddresses.length + " addresses were checked. Sleeping for " + time + " seconds");
+            println('[' + name + "] " + walletAddresses.length + " addresses were checked. Sleeping for " + time + " seconds");
         }
     }
 
@@ -764,7 +717,7 @@ public class Main {
     private void processError(JSONObject jo, String key) {
         if (jo != null) {
             Error error = new Error(jo);
-            Output.println(error.toString());
+            println(error.toString());
             if (error.getCode() == 429) {
                 try {
                     Thread.sleep(1000);
@@ -773,10 +726,10 @@ public class Main {
                 }
             } else {
                 Output.writeJSONToFile(".\\data\\failed\\" + key, jo);
-                Output.println("JSON was written to file " + key + ".txt");
+                println("JSON was written to file " + key + ".txt");
             }
         } else {
-            Output.println("JSONObject is null");
+            println("JSONObject is null");
         }
     }
 
@@ -799,5 +752,9 @@ public class Main {
                 }
             }
         }
+    }
+    
+    private void println(String text) {
+        Output.println("[TRACKER] " + text);
     }
 }
