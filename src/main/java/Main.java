@@ -28,7 +28,11 @@ public class Main {
     private Map<String, String> wallets;
     private Map<String, String> lastTransactions;
     private List<String> unknownTransactionsList;
+    private final Scheduler scheduler;
+    private int intervals = 24;
 
+    private ScheduledThreadPoolExecutor prodsScheduleExecutor;
+    private Future<?> allThreadsManager;
     private Future<?> conManager;
     private ScheduledThreadPoolExecutor scheduleExecutor;
     private List<ScheduledFuture<?>> scheduleManagers;
@@ -80,6 +84,12 @@ public class Main {
         loadAccounts(".\\data\\136412831_wallets.txt");
         loadLastTransactions(".\\data\\136412831_lastTransactions.txt");
         loadKeys(".\\data\\keys.txt");
+        intervals = 96;
+        println("Number of time intervals: " + intervals);
+        scheduler = new Scheduler(walletAddresses, intervals);
+        scheduler.fillSchedules();
+        println("Schedules drawn up");
+        println("Waiting for start command");
     }
 
     private void init() {
@@ -330,26 +340,26 @@ public class Main {
         return text;
     }
 
-    public void postJson(String key) {
+    public boolean postJson(String key) {
+        println("Parsing " + key);
+        String JSON = JSONbody.replace("key", key);
+        JSONObject jsonObj = null;
         try {
-            println("Parsing " + key);
-            String JSON = JSONbody.replace("key", key);
             StringEntity stringEntity = new StringEntity(JSON);
             httpPost.setEntity(stringEntity);
             CloseableHttpResponse response = client.execute(httpPost);
             HttpEntity entity = response.getEntity();
             String result = EntityUtils.toString(entity);
-            JSONObject jsonObj = new JSONObject(result);
-            try {
-                parseTransaction(jsonObj);
-            } catch (org.json.JSONException e) {
-                e.printStackTrace();
-                processError(jsonObj, key);
-                postJson(key); // TODO check later
-            }
+            jsonObj = new JSONObject(result);
+            parseTransaction(jsonObj);
             response.close();
-        } catch (Exception e) {
+            return true;
+        } catch (JSONException | IOException e) {
             e.printStackTrace();
+            if (jsonObj != null) {
+                processError(jsonObj, key);
+            }
+            return false;
         }
     }
 
@@ -504,6 +514,7 @@ public class Main {
                 bf.newLine();
             }
             bf.flush();
+            println("Last transactions were exported");
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -517,6 +528,7 @@ public class Main {
                 bf.newLine();
             }
             bf.flush();
+            println("Unknown transactions were exported");
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -572,8 +584,91 @@ public class Main {
         println("First run");
         checkAccounts(walletAddresses);
         println("First run ended");
-        startProducersThreads();
+        startProdThreadsExecutorThread();
         startConsumerThread();
+    }
+
+    private void startProdThreadsExecutorThread() {
+        runAllThreads();
+        long currentTime = System.currentTimeMillis();
+        int timeMins = 24 * 60 / intervals;
+        println("Time in minutes between checks: " + timeMins);
+        int round = timeMins * 60 * 1000;
+        long startTime = (currentTime / round) * round + round;
+        //SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss");
+        //String formattedTime = sdf.format(startTime);
+       //println("Threads will start at " + formattedTime);
+        Runnable run = () -> {
+            cancelProducerThreads();
+            runAllThreads();
+        };
+        prodsScheduleExecutor = new ScheduledThreadPoolExecutor(1);
+        long delayMS = startTime - System.currentTimeMillis();
+        int delayS = (int) (delayMS / 1000);
+        int periodS = timeMins * 60;
+        allThreadsManager = prodsScheduleExecutor.scheduleAtFixedRate(run, delayS, periodS, TimeUnit.SECONDS);
+        //println("Time before start: " + delayS + " s");
+    }
+
+    private void runAllThreads() {
+        println("Starting threads");
+        setActualWallets();
+        startProducersThreads();
+    }
+
+    private void setActualWallets() {
+        long timeMillis = System.currentTimeMillis() + 1000L;
+        println("Selecting wallets for next run. Wallets count: " + wallets.size());
+        println(String.format(
+                "Time: %02d:%02d:%02d",
+                TimeUnit.MILLISECONDS.toHours(timeMillis),
+                TimeUnit.MILLISECONDS.toMinutes(timeMillis) - TimeUnit.HOURS.toMinutes(TimeUnit.MILLISECONDS.toHours(timeMillis)),
+                TimeUnit.MILLISECONDS.toSeconds(timeMillis) - TimeUnit.MINUTES.toSeconds(TimeUnit.MILLISECONDS.toMinutes(timeMillis)))
+        );
+        List<String> actualWallets = new ArrayList<>();
+        for (Map.Entry<String, String> mapEntry : wallets.entrySet()) {
+            String walletAddress = mapEntry.getKey();
+            println("Checking if wallet is active: " + walletAddress);
+            if (isWalletActive(walletAddress, timeMillis)) {
+                actualWallets.add(walletAddress);
+                println("Wallet added: " + walletAddress);
+            } else {
+                println("Wallet skipped: " + walletAddress);
+            }
+        }
+        walletAddresses = actualWallets.toArray(new String[0]);
+        println(walletAddresses.length + " wallets were selected");
+    }
+
+    private boolean isWalletActive(String walletAddress, long time) {
+        return scheduler.isWalletActive(walletAddress, time);
+    }
+
+    private void startProducersThreads() {
+        println("Starting prod threads");
+        int chunkSize = findChunkSize();
+        String[][] wallets = chuck(walletAddresses, chunkSize);
+        // Producers
+        scheduleExecutor = new ScheduledThreadPoolExecutor(wallets.length);
+        scheduleManagers = new ArrayList<>();
+        procs = new ArrayList<>();
+        for (int i = 0; i < wallets.length; i++) {
+            println("[Thread " + i + "] wallets: " + Arrays.toString(wallets[i]));
+            Runnable proc = new Producer(transactionsQueue, wallets[i], "Thread " + i);
+            procs.add(proc);
+            scheduleManagers.add(scheduleExecutor.scheduleAtFixedRate(proc, 0, time, TimeUnit.SECONDS));
+        }
+        println(scheduleManagers.size() + " prod threads started");
+    }
+
+    private int findChunkSize() {
+        if (walletAddresses.length >= 10 && walletAddresses.length <= 20) {
+            return 5;
+        } else if (walletAddresses.length >= 30) {
+            return 8;
+        } else {
+            return 10;
+        }
     }
 
     public String[][] chuck(String[] array, int chunkSize) {
@@ -589,23 +684,8 @@ public class Main {
         return output;
     }
 
-    private void startProducersThreads() {
-        String[][] wallets = chuck(walletAddresses, 9);
-        //println(Arrays.deepToString(wallets));
-        // Producers
-        scheduleExecutor = new ScheduledThreadPoolExecutor(wallets.length);
-        scheduleManagers = new ArrayList<>();
-        procs = new ArrayList<>();
-        for (int i = 0; i < wallets.length; i++) {
-            println("[Thread " + i + "] wallets: " + Arrays.toString(wallets[i]));
-            Runnable proc = new Producer(transactionsQueue, wallets[i], "Thread " + i);
-            procs.add(proc);
-            scheduleManagers.add(scheduleExecutor.scheduleAtFixedRate(proc, 0, time, TimeUnit.SECONDS));
-        }
-        println(scheduleManagers.size() + " prod threads started");
-    }
-
     private void startConsumerThread() {
+        println("Starting con thread");
         Runnable consThread = new Consumer(transactionsQueue);
         ExecutorService consExec = Executors.newSingleThreadExecutor();
         conManager = consExec.submit(consThread);
@@ -617,31 +697,61 @@ public class Main {
         exportUnknownTransactions();
         cancelProducerThreads();
         cancelConsumerThread();
+        cancelExecutorThread();
     }
 
     private void cancelProducerThreads() {
-        for (int i = 0; i < scheduleManagers.size(); i++) {
-            ScheduledFuture<?> sf = scheduleManagers.get(i);
-            if (sf.isCancelled()) {
-                println("Thread " + i + " is already interrupted");
-                continue;
+        println("Stopping prod threads");
+        if (scheduleManagers != null) {
+            for (int i = 0; i < scheduleManagers.size(); i++) {
+                ScheduledFuture<?> sf = scheduleManagers.get(i);
+                if (sf.isCancelled()) {
+                    println("Thread " + i + " is already interrupted");
+                    continue;
+                }
+                sf.cancel(false);
+                if (sf.isCancelled()) {
+                    println("Thread " + i + " is interrupted");
+                }
             }
-            sf.cancel(false);
-            if (sf.isCancelled()) {
-                println("Thread " + i + " is interrupted");
-            }
+        } else {
+            println("scheduleManagers is null");
         }
-        scheduleExecutor.shutdown();
+        if (scheduleExecutor != null) {
+            scheduleExecutor.shutdown();
+        } else {
+            println("scheduleExecutor is null");
+        }
         println("Prod threads are interrupted");
     }
 
     private void cancelConsumerThread() {
-        if (conManager.isCancelled()) {
-            println("Con thread is already interrupted");
+        println("Stopping con thread");
+        if (conManager != null) {
+            if (conManager.isCancelled()) {
+                println("Con thread is already interrupted");
+            }
+            conManager.cancel(false);
+            if (conManager.isCancelled()) {
+                println("Con thread is interrupted");
+            }
+        } else {
+            println("Con manager is null");
         }
-        conManager.cancel(false);
-        if (conManager.isCancelled()) {
-            println("Con thread is interrupted");
+    }
+
+    private void cancelExecutorThread() {
+        println("Stopping allThreadsManager");
+        if (allThreadsManager != null) {
+            if (allThreadsManager.isCancelled()) {
+                println("Prod scheduler thread is already interrupted");
+            }
+            allThreadsManager.cancel(false);
+            if (allThreadsManager.isCancelled()) {
+                println("Prod scheduler thread is interrupted");
+            }
+        } else {
+            println("allThreadsManager is null");
         }
     }
 
@@ -745,7 +855,9 @@ public class Main {
             while (!conManager.isCancelled()) {
                 try {
                     String transactionSign = transactionsQueue.take();
-                    postJson(transactionSign);
+                    while (!postJson(transactionSign)) {
+                        Thread.sleep(1500);
+                    }
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                     Thread.currentThread().interrupt();

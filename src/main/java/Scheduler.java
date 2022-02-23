@@ -14,11 +14,14 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 
 public class Scheduler {
-    String[] walletAddresses;
-    final String SOLANA_MAINNET_URL = "https://api.mainnet-beta.solana.com";
-    final String SOLANA_DEVNET_URL = "https://api.devnet.solana.com";
+    private final int numberOfTimeIntervals;
+    private String[] walletAddresses;
+    private final String SOLANA_MAINNET_URL = "https://api.mainnet-beta.solana.com";
+    private final String SOLANA_DEVNET_URL = "https://api.devnet.solana.com";
     private final HttpPost httpPost;
     private final CloseableHttpClient client;
+    private final Map<String, Schedule> schedules;
+
     final String JSON =  """
                 {
                     "jsonrpc": "2.0",
@@ -41,21 +44,24 @@ public class Scheduler {
                     ]
                 }""";
 
-    public Scheduler(String[] walletAddresses) {
+    public Scheduler(String[] walletAddresses, int numberOfTimeIntervals) {
         this.walletAddresses = walletAddresses;
+        this.numberOfTimeIntervals = numberOfTimeIntervals;
         httpPost = new HttpPost(SOLANA_MAINNET_URL);
         httpPost.setHeader("Accept", "application/json");
         httpPost.setHeader("Content-type", "application/json");
         client = HttpClients.createDefault();
+        schedules = new HashMap<>();
     }
 
-    public Scheduler(String filePath) {
+    public Scheduler(String filePath, int numberOfTimeIntervals) {
         importWallets(filePath);
+        this.numberOfTimeIntervals = numberOfTimeIntervals;
         httpPost = new HttpPost(SOLANA_MAINNET_URL);
         httpPost.setHeader("Accept", "application/json");
         httpPost.setHeader("Content-type", "application/json");
         client = HttpClients.createDefault();
-        checkAccounts(walletAddresses);
+        schedules = new HashMap<>();
     }
 
     private void importWallets(String filePath) {
@@ -70,6 +76,15 @@ public class Scheduler {
             walletAddresses = wallets.toArray(new String[0]);
         } catch (IOException e) {
             e.printStackTrace();
+        }
+    }
+
+    public void fillSchedules() {
+        for (String walletAddress: walletAddresses) {
+            Schedule schedule = new Schedule(walletAddress);
+            schedule.createTimeIntervals(numberOfTimeIntervals);
+            schedule.fillWalletsTimeIntervals();
+            schedules.put(walletAddress, schedule);
         }
     }
 
@@ -183,5 +198,9 @@ public class Scheduler {
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    public boolean isWalletActive(String walletAddress, long timeMillis) {
+        return schedules.get(walletAddress).isWalletActiveAtThisTime(timeMillis);
     }
 }
